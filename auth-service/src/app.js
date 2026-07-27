@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
+const authenticateToken = require('./middleware/auth');
 
 const app = express();
 app.use(express.json());
@@ -70,6 +71,10 @@ app.post('/login', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Something went wrong' });
   }
+});
+
+app.get('/me', authenticateToken, (req, res) => {
+  res.status(200).json(req.user);
 });
 
 module.exports = app;
