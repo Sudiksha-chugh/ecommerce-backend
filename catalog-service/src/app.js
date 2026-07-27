@@ -44,5 +44,49 @@ app.post('/products', async (req, res) => {
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
+app.get('/products/search', async (req, res) => {
+  const { q } = req.query;
 
+  if (!q) {
+    return res.status(400).json({ error: 'Query parameter "q" is required' });
+  }
+
+  try {
+    const result = await esClient.search({
+      index: PRODUCTS_INDEX,
+      query: {
+        multi_match: {
+          query: q,
+          fields: ['name', 'description'],
+          fuzziness: 'AUTO',
+        },
+      },
+    });
+
+    const products = result.hits.hits.map((hit) => ({
+      id: hit._id,
+      score: hit._score,
+      ...hit._source,
+    }));
+
+    res.status(200).json(products);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+app.get('/products/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM products WHERE id = $1', [req.params.id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    res.status(200).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
 module.exports = app;
