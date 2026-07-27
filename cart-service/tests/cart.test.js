@@ -6,17 +6,10 @@ const { client, connectRedis } = require('../src/redisClient');
 const catalogClient = require('../src/catalogClient');
 
 describe('POST /cart/:userId/items', () => {
-  beforeAll(async () => {
-    await connectRedis();
-  });
 
   afterEach(async () => {
     await client.del('cart:user1');
     jest.clearAllMocks();
-  });
-
-  afterAll(async () => {
-    await client.quit();
   });
 
   it('adds an item to the cart after verifying it with catalog-service', async () => {
@@ -58,3 +51,31 @@ describe('POST /cart/:userId/items', () => {
     expect(res.statusCode).toBe(503);
   });
 });
+
+describe('GET /cart/:userId', () => {
+  afterEach(async () => {
+    await client.del('cart:user2');
+  });
+
+  it('returns an empty cart for a user with no items', async () => {
+    const res = await request(app).get('/cart/user2');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toEqual([]);
+  });
+
+  it('returns the existing cart for a user with items', async () => {
+    await client.set('cart:user2', JSON.stringify({ items: [{ productId: 1, name: 'Test', price: '10.00', quantity: 1 }] }));
+
+    const res = await request(app).get('/cart/user2');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.length).toBe(1);
+  });
+});
+
+ beforeAll(async () => {
+    await connectRedis();
+  });
+
+afterAll(async () => {
+    await client.quit();
+  });

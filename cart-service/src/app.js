@@ -43,5 +43,13 @@ app.post('/cart/:userId/items', async (req, res) => {
 
   res.status(201).json(cart);
 });
+app.get('/cart/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const cartKey = `cart:${userId}`;
 
+  const cartJson = await client.get(cartKey);
+  const cart = cartJson ? JSON.parse(cartJson) : { items: [] };
+
+  res.status(200).json(cart);
+});
 module.exports = app;
