@@ -105,7 +105,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-  
+
   orders-db:
     image: postgres:16
     container_name: orders-db
@@ -117,6 +117,36 @@ services:
       - "5435:5432"
     volumes:
       - orders-db-data:/var/lib/postgresql/data
+
+  orders-service:
+    build: ./orders-service
+    container_name: orders-service
+    restart: unless-stopped
+    ports:
+      - "4003:4003"
+    environment:
+      DB_HOST: orders-db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: orders_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 4003
+    depends_on:
+      - orders-db
+      - rabbitmq
+
+  payments-service:
+    build: ./payments-service
+    container_name: payments-service
+    restart: unless-stopped
+    ports:
+      - "4004:4004"
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PORT: 4004
+    depends_on:
+      - rabbitmq
 
 volumes:
   auth-db-data:
