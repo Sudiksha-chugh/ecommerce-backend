@@ -12,5 +12,22 @@ services:
     volumes:
       - auth-db-data:/var/lib/postgresql/data
 
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      DB_HOST: auth-db
+      DB_PORT: 5432
+      DB_USER: auth_user
+      DB_PASSWORD: auth_pass
+      DB_NAME: auth_db
+      JWT_SECRET: super-secret-dev-key-change-in-prod
+      PORT: 4000
+    depends_on:
+      - auth-db
+
 volumes:
   auth-db-data:
