@@ -55,6 +55,24 @@ services:
     volumes:
       - es-data:/usr/share/elasticsearch/data
 
+  catalog-service:
+    build: ./catalog-service
+    container_name: catalog-service
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    environment:
+      DB_HOST: catalog-db
+      DB_PORT: 5432
+      DB_USER: catalog_user
+      DB_PASSWORD: catalog_pass
+      DB_NAME: catalog_db
+      ES_NODE: http://elasticsearch:9200
+      PORT: 4001
+    depends_on:
+      - catalog-db
+      - elasticsearch
+
 volumes:
   auth-db-data:
   catalog-db-data:
