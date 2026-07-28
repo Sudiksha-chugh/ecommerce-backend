@@ -55,21 +55,25 @@ services:
     volumes:
       - es-data:/usr/share/elasticsearch/data
 
-  cart-service:
-    build: ./cart-service
-    container_name: cart-service
+  catalog-service:
+    build: ./catalog-service
+    container_name: catalog-service
     restart: unless-stopped
     ports:
-      - "4002:4002"
+      - "4001:4001"
     environment:
-      REDIS_URL: redis://redis:6379
-      CATALOG_SERVICE_URL: http://catalog-service:4001
+      DB_HOST: catalog-db
+      DB_PORT: 5432
+      DB_USER: catalog_user
+      DB_PASSWORD: catalog_pass
+      DB_NAME: catalog_db
+      ES_NODE: http://elasticsearch:9200
       JWT_SECRET: super-secret-dev-key-change-in-prod
-      PORT: 4002
+      PORT: 4001
     depends_on:
-      - redis
-      - catalog-service
-      
+      - catalog-db
+      - elasticsearch
+
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -88,6 +92,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       CATALOG_SERVICE_URL: http://catalog-service:4001
+      JWT_SECRET: super-secret-dev-key-change-in-prod
       PORT: 4002
     depends_on:
       - redis
@@ -128,6 +133,7 @@ services:
       DB_PASSWORD: postgres
       DB_NAME: orders_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      JWT_SECRET: super-secret-dev-key-change-in-prod
       PORT: 4003
     depends_on:
       - orders-db
@@ -162,7 +168,7 @@ services:
       - catalog-service
       - cart-service
       - orders-service
-
+      
 volumes:
   auth-db-data:
   catalog-db-data:
