@@ -8,21 +8,32 @@ async function startConsumer() {
   const incomingQueue = 'order_placed';
   const outgoingQueue = 'payment_processed';
 
-  await channel.assertQueue(incomingQueue);
-  await channel.assertQueue(outgoingQueue);
+  await channel.assertQueue(incomingQueue, { durable: true });
+  await channel.assertQueue(outgoingQueue, { durable: true });
+  await channel.prefetch(1);
 
   console.log(`payments-service listening on "${incomingQueue}"...`);
 
   channel.consume(incomingQueue, async (msg) => {
-    if (msg !== null) {
+    if (msg === null) return;
+
+    try {
       const order = JSON.parse(msg.content.toString());
       console.log(`Received order ${order.id} for payment processing`);
 
       const paymentResult = processPayment(order);
 
-      channel.sendToQueue(outgoingQueue, Buffer.from(JSON.stringify(paymentResult)));
+      channel.sendToQueue(
+        outgoingQueue,
+        Buffer.from(JSON.stringify(paymentResult)),
+        { persistent: true }
+      );
+
       console.log(`Payment ${paymentResult.status} for order ${order.id}, published to "${outgoingQueue}"`);
 
+      channel.ack(msg);
+    } catch (err) {
+      console.error('Failed to process order_placed message:', err.message);
       channel.ack(msg);
     }
   });
