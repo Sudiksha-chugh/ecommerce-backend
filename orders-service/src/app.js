@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('./db');
 const { getChannel } = require('./rabbitmq');
+const authenticateToken = require('./middleware/auth');
 require('dotenv').config();
 
 const app = express();
@@ -32,12 +33,13 @@ function publishOrderPlaced(order) {
   }
 }
 
-app.post('/orders', async (req, res) => {
+app.post('/orders', authenticateToken, async (req, res) => {
   try {
-    const { userId, items, totalAmount } = req.body;
+    const userId = req.user.userId;
+    const { items, totalAmount } = req.body;
 
-    if (!userId || !items || !totalAmount) {
-      return res.status(400).json({ error: 'userId, items, and totalAmount are required' });
+    if (!items || !totalAmount) {
+      return res.status(400).json({ error: 'items and totalAmount are required' });
     }
 
     const result = await pool.query(
