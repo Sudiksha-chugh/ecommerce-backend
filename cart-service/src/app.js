@@ -1,6 +1,7 @@
 const express = require('express');
 const { client } = require('./redisClient');
 const catalogClient = require('./catalogClient');
+const authenticateToken = require('./middleware/auth');
 
 const app = express();
 app.use(express.json());
@@ -9,8 +10,8 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.post('/cart/:userId/items', async (req, res) => {
-  const { userId } = req.params;
+app.post('/cart/items', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
   const { productId, quantity } = req.body;
 
   if (!productId || !quantity) {
@@ -43,8 +44,9 @@ app.post('/cart/:userId/items', async (req, res) => {
 
   res.status(201).json(cart);
 });
-app.get('/cart/:userId', async (req, res) => {
-  const { userId } = req.params;
+
+app.get('/cart', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
   const cartKey = `cart:${userId}`;
 
   const cartJson = await client.get(cartKey);
@@ -52,4 +54,5 @@ app.get('/cart/:userId', async (req, res) => {
 
   res.status(200).json(cart);
 });
+
 module.exports = app;
