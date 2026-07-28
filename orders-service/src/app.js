@@ -1,6 +1,6 @@
 const express = require('express');
-const amqp = require('amqplib');
 const pool = require('./db');
+const { getChannel } = require('./rabbitmq');
 require('dotenv').config();
 
 const app = express();
@@ -9,19 +9,27 @@ app.use(express.json());
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
-async function publishOrderPlaced(order) {
-  const connection = await amqp.connect(process.env.RABBITMQ_URL);
-  const channel = await connection.createChannel();
 
-  const queueName = 'order_placed';
-  await channel.assertQueue(queueName);
+function publishOrderPlaced(order) {
+  const channel = getChannel();
 
-  const message = JSON.stringify(order);
-  channel.sendToQueue(queueName, Buffer.from(message));
+  if (!channel) {
+    console.error(`Could not publish order_placed for order ${order.id}: no RabbitMQ channel`);
+    return false;
+  }
 
-  console.log(`Published order_placed event for order id ${order.id}`);
-
-  setTimeout(() => connection.close(), 500);
+  try {
+    channel.sendToQueue(
+      'order_placed',
+      Buffer.from(JSON.stringify(order)),
+      { persistent: true }
+    );
+    console.log(`Published order_placed event for order id ${order.id}`);
+    return true;
+  } catch (err) {
+    console.error(`Failed to publish order_placed for order ${order.id}:`, err.message);
+    return false;
+  }
 }
 
 app.post('/orders', async (req, res) => {
@@ -41,7 +49,7 @@ app.post('/orders', async (req, res) => {
 
     const newOrder = result.rows[0];
 
-    await publishOrderPlaced(newOrder);
+    publishOrderPlaced(newOrder);
 
     res.status(201).json(newOrder);
   } catch (err) {
