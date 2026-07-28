@@ -11,7 +11,9 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.post('/products', async (req, res) => {
+const authenticateToken = require('./middleware/auth');
+
+app.post('/products', authenticateToken, async (req, res) => {
   const { name, description, price, stock } = req.body;
 
   if (!name || price === undefined) {
