@@ -86,6 +86,7 @@ describe('POST /orders', () => {
         if (typeof text === 'string' && text.includes('INSERT INTO outbox_events')) {
           return Promise.reject(new Error('Simulated outbox insert failure'));
         }
+        
         return realQuery(text, params);
       });
 
