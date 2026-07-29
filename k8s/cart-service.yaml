@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cart-service-secret
+type: Opaque
+stringData:
+  JWT_SECRET: super-secret-dev-key-change-in-prod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart-service
+  template:
+    metadata:
+      labels:
+        app: cart-service
+    spec:
+      containers:
+        - name: cart-service
+          image: sudikshachugh/cart-service:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: cart-service-secret
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: CATALOG_SERVICE_URL
+              value: http://catalog-service:4001
+            - name: PORT
+              value: "4002"
+          ports:
+            - containerPort: 4002
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4002
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart-service
+spec:
+  selector:
+    app: cart-service
+  ports:
+    - port: 4002
+      targetPort: 4002
