@@ -70,6 +70,7 @@ describe('pollOnce', () => {
   it('does nothing when there are no unpublished events', async () => {
     getChannel.mockReturnValue({ sendToQueue: jest.fn() });
 
+    
     await expect(pollOnce()).resolves.not.toThrow();
   });
 });
