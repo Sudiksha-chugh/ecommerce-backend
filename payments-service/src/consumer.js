@@ -1,56 +1,72 @@
 const amqp = require('amqplib');
 const { processPayment } = require('./payment-logic');
 
+const RECONNECT_DELAY_MS = 3000;
+
 async function startConsumer() {
-  const connection = await amqp.connect(process.env.RABBITMQ_URL);
-  const channel = await connection.createChannel();
+  try {
+    const connection = await amqp.connect(process.env.RABBITMQ_URL);
+    const channel = await connection.createChannel();
 
-  const incomingQueue = 'order_placed';
-  const outgoingQueue = 'payment_processed';
-  const dlq = 'order_placed_dlq';
+    const incomingQueue = 'order_placed';
+    const outgoingQueue = 'payment_processed';
+    const dlq = 'order_placed_dlq';
 
-  await channel.assertQueue(incomingQueue, { durable: true });
-  await channel.assertQueue(outgoingQueue, { durable: true });
-  await channel.assertQueue(dlq, { durable: true });
-  await channel.prefetch(1);
+    await channel.assertQueue(incomingQueue, { durable: true });
+    await channel.assertQueue(outgoingQueue, { durable: true });
+    await channel.assertQueue(dlq, { durable: true });
+    await channel.prefetch(1);
 
-  console.log(`payments-service listening on "${incomingQueue}"...`);
+    console.log(`payments-service listening on "${incomingQueue}"...`);
 
-  channel.consume(incomingQueue, async (msg) => {
-    if (msg === null) return;
+    connection.on('error', (err) => {
+      console.error('RabbitMQ connection error, will reconnect:', err.message);
+    });
 
-    try {
-      const order = JSON.parse(msg.content.toString());
-      console.log(`Received order ${order.id} for payment processing`);
+    connection.on('close', () => {
+      console.error(`RabbitMQ connection closed, reconnecting in ${RECONNECT_DELAY_MS}ms...`);
+      setTimeout(startConsumer, RECONNECT_DELAY_MS);
+    });
 
-      const paymentResult = processPayment(order);
+    channel.consume(incomingQueue, async (msg) => {
+      if (msg === null) return;
 
-      channel.sendToQueue(
-        outgoingQueue,
-        Buffer.from(JSON.stringify(paymentResult)),
-        { persistent: true }
-      );
+      try {
+        const order = JSON.parse(msg.content.toString());
+        console.log(`Received order ${order.id} for payment processing`);
 
-      console.log(`Payment ${paymentResult.status} for order ${order.id}, published to "${outgoingQueue}"`);
+        const paymentResult = processPayment(order);
 
-      channel.ack(msg);
-    } catch (err) {
-      console.error('Failed to process order_placed message:', err.message);
+        channel.sendToQueue(
+          outgoingQueue,
+          Buffer.from(JSON.stringify(paymentResult)),
+          { persistent: true }
+        );
 
-      channel.sendToQueue(
-        dlq,
-        Buffer.from(JSON.stringify({
-          originalMessage: msg.content.toString(),
-          error: err.message,
-          failedAt: new Date().toISOString(),
-        })),
-        { persistent: true }
-      );
+        console.log(`Payment ${paymentResult.status} for order ${order.id}, published to "${outgoingQueue}"`);
 
-      console.error(`Moved unprocessable message to "${dlq}"`);
-      channel.ack(msg);
-    }
-  });
+        channel.ack(msg);
+      } catch (err) {
+        console.error('Failed to process order_placed message:', err.message);
+
+        channel.sendToQueue(
+          dlq,
+          Buffer.from(JSON.stringify({
+            originalMessage: msg.content.toString(),
+            error: err.message,
+            failedAt: new Date().toISOString(),
+          })),
+          { persistent: true }
+        );
+
+        console.error(`Moved unprocessable message to "${dlq}"`);
+        channel.ack(msg);
+      }
+    });
+  } catch (err) {
+    console.error(`Failed to connect to RabbitMQ, retrying in ${RECONNECT_DELAY_MS}ms:`, err.message);
+    setTimeout(startConsumer, RECONNECT_DELAY_MS);
+  }
 }
 
 module.exports = { startConsumer };
