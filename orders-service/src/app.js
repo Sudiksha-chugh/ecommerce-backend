@@ -32,32 +32,44 @@ function publishOrderPlaced(order) {
     return false;
   }
 }
-
 app.post('/orders', authenticateToken, async (req, res) => {
+  const userId = req.user.userId;
+  const { items, totalAmount } = req.body;
+
+  if (!items || !totalAmount) {
+    return res.status(400).json({ error: 'items and totalAmount are required' });
+  }
+
+  let client;
   try {
-    const userId = req.user.userId;
-    const { items, totalAmount } = req.body;
+    client = await pool.connect();
+    await client.query('BEGIN');
 
-    if (!items || !totalAmount) {
-      return res.status(400).json({ error: 'items and totalAmount are required' });
-    }
-
-    const result = await pool.query(
+    const orderResult = await client.query(
       `INSERT INTO orders (user_id, items, total_amount)
        VALUES ($1, $2, $3)
        RETURNING *`,
       [userId, JSON.stringify(items), totalAmount]
     );
+    const newOrder = orderResult.rows[0];
 
-    const newOrder = result.rows[0];
+    await client.query(
+      `INSERT INTO outbox_events (event_type, payload)
+       VALUES ($1, $2)`,
+      ['order_placed', JSON.stringify(newOrder)]
+    );
 
-    publishOrderPlaced(newOrder);
+    await client.query('COMMIT');
+    client.release();
 
     res.status(201).json(newOrder);
   } catch (err) {
-    console.error(err);
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release(err);
+    }
+    console.error('Order creation failed, rolled back:', err.message);
     res.status(500).json({ error: 'Failed to create order' });
   }
 });
-
 module.exports = app;
