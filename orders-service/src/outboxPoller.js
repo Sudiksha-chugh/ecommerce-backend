@@ -1,6 +1,5 @@
 const pool = require('./db');
-const { getChannel } = require('./rabbitmq');
-
+const { getChannel, connectRabbitMQ } = require('./rabbitmq');
 const POLL_INTERVAL_MS = 3000;
 let intervalHandle = null;
 
