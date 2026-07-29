@@ -16,10 +16,15 @@ async function pollOnce() {
       return;
     }
 
-    const channel = getChannel();
+    let channel = getChannel();
     if (!channel) {
-      console.error(`Outbox poller: RabbitMQ unavailable, will retry ${result.rows.length} event(s) next cycle`);
-      return;
+      try {
+        channel = await connectRabbitMQ();
+        console.log('Outbox poller: reconnected to RabbitMQ');
+      } catch (err) {
+        console.error(`Outbox poller: RabbitMQ unavailable (${err.message}), will retry ${result.rows.length} event(s) next cycle`);
+        return;
+      }
     }
 
     for (const event of result.rows) {
