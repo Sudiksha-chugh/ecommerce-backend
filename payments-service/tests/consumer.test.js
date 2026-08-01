@@ -96,4 +96,57 @@ describe('startConsumer', () => {
 
     expect(amqp.connect.mock.calls.length).toBeGreaterThan(connectCallsBefore);
   });
+    describe('idempotency', () => {
+  beforeAll(() => {
+    jest.useRealTimers();
+  });
+
+  const pool = require('../src/db');
+
+  afterEach(async () => {
+    await pool.query('DELETE FROM processed_orders');
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it('processes an order it has not seen before', async () => {
+    await startConsumer();
+
+    const consumeCallback = mockChannel.consume.mock.calls[0][1];
+    const fakeOrder = { id: 500, user_id: 1, total_amount: '20.00' };
+    const fakeMsg = { content: Buffer.from(JSON.stringify(fakeOrder)) };
+
+    await consumeCallback(fakeMsg);
+
+    expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+      'payment_processed',
+      expect.any(Buffer),
+      { persistent: true }
+    );
+
+    const check = await pool.query('SELECT * FROM processed_orders WHERE order_id = $1', [500]);
+    expect(check.rows.length).toBe(1);
+  });
+
+  it('skips processing (but still acks) an order it has already seen', async () => {
+    await pool.query('INSERT INTO processed_orders (order_id) VALUES ($1)', [501]);
+
+    await startConsumer();
+
+    const consumeCallback = mockChannel.consume.mock.calls[0][1];
+    const fakeOrder = { id: 501, user_id: 1, total_amount: '20.00' };
+    const fakeMsg = { content: Buffer.from(JSON.stringify(fakeOrder)) };
+
+    await consumeCallback(fakeMsg);
+
+    expect(mockChannel.sendToQueue).not.toHaveBeenCalledWith(
+      'payment_processed',
+      expect.any(Buffer),
+      { persistent: true }
+    );
+    expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+  });
+});
 });

@@ -139,6 +139,19 @@ services:
       - orders-db
       - rabbitmq
 
+  payments-db:
+    image: postgres:16
+    container_name: payments-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: payments_db
+    ports:
+      - "5436:5432"
+    volumes:
+      - payments-db-data:/var/lib/postgresql/data
+
   payments-service:
     build: ./payments-service
     container_name: payments-service
@@ -147,9 +160,15 @@ services:
       - "4004:4004"
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      DB_HOST: payments-db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: payments_db
       PORT: 4004
     depends_on:
       - rabbitmq
+      - payments-db
 
   gateway:
     build: ./gateway
@@ -168,10 +187,11 @@ services:
       - catalog-service
       - cart-service
       - orders-service
-      
+
 volumes:
   auth-db-data:
   catalog-db-data:
   es-data:
   redis-data:
   orders-db-data:
+  payments-db-data:

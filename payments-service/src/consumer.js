@@ -1,5 +1,6 @@
 const amqp = require('amqplib');
 const { processPayment } = require('./payment-logic');
+const pool = require('./db');
 
 const RECONNECT_DELAY_MS = 3000;
 
@@ -33,6 +34,18 @@ async function startConsumer() {
 
       try {
         const order = JSON.parse(msg.content.toString());
+
+        try {
+          await pool.query('INSERT INTO processed_orders (order_id) VALUES ($1)', [order.id]);
+        } catch (dbErr) {
+          if (dbErr.code === '23505') {
+            console.log(`Order ${order.id} already processed, skipping (idempotency check)`);
+            channel.ack(msg);
+            return;
+          }
+          throw dbErr;
+        }
+
         console.log(`Received order ${order.id} for payment processing`);
 
         const paymentResult = processPayment(order);
