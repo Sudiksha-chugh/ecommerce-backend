@@ -1,6 +1,7 @@
 const app = require('./app');
 const { connectRabbitMQ } = require('./rabbitmq');
 const { startOutboxPoller } = require('./outboxPoller');
+const { startPaymentConsumer } = require('./paymentConsumer');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 4003;
@@ -16,6 +17,8 @@ async function start() {
   }
 
   startOutboxPoller();
+  startPaymentConsumer();
+
   app.listen(PORT, () => {
     console.log(`orders-service running on port ${PORT}`);
   });

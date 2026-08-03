@@ -1,11 +1,27 @@
 const app = require('./app');
-const { startConsumer } = require('./consumer');
+const { connectRabbitMQ } = require('./rabbitmq');
+const { startOutboxPoller } = require('./outboxPoller');
+const { startPaymentConsumer } = require('./paymentConsumer');
 require('dotenv').config();
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 4003;
+const STARTUP_RETRY_DELAY_MS = 3000;
 
-app.listen(PORT, () => {
-  console.log(`payments-service HTTP server running on port ${PORT}`);
-});
+async function start() {
+  try {
+    await connectRabbitMQ();
+  } catch (err) {
+    console.error(`Failed to connect to RabbitMQ on startup, retrying in ${STARTUP_RETRY_DELAY_MS}ms:`, err.message);
+    setTimeout(start, STARTUP_RETRY_DELAY_MS);
+    return;
+  }
 
-startConsumer();
+  startOutboxPoller();
+  startPaymentConsumer();
+
+  app.listen(PORT, () => {
+    console.log(`orders-service running on port ${PORT}`);
+  });
+}
+
+start();
