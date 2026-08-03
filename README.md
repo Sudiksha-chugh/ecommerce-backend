@@ -513,6 +513,10 @@ Covers: health checks, full auth flow (idempotent — generates a unique email p
 
 **Last full run: 38/38 assertions passing.**
 
+### Continuous Integration
+
+Every push and pull request to `main` triggers `.github/workflows/ci.yml`, which runs all 6 services' test suites in parallel on fresh, isolated infrastructure (Postgres, Redis, Elasticsearch, RabbitMQ spun up per-job via GitHub Actions `services`). No manual test running required for changes merged to `main`.
+
 ---
 
 ## ⚙️ Environment Configuration
@@ -547,11 +551,9 @@ In Kubernetes, the same pattern applies via Service names (identical hostnames, 
 
 ---
 
+
 ## ⚠️ Known Limitations
 
-### Order Status Reconciliation
-
-The Payments Service emits `payment_processed` events, but the Orders Service does not yet consume these events to update order status from `pending` to `succeeded`/`failed`.
 
 ### Idempotency
 
@@ -585,7 +587,7 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [x] Add end-to-end integration tests (Postman)
 * [ ] Add role-based access control
 * [ ] Implement payment status reconciliation
-* [ ] Add idempotency keys for order/payment processing
+* [x] Add idempotency keys for order/payment processing
 * [ ] Add inventory management
 * [ ] Add order cancellation
 * [ ] Add API Gateway rate limiting
@@ -595,7 +597,7 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [ ] Add PersistentVolumeClaim for RabbitMQ in Kubernetes
 * [ ] Add Ingress instead of a bare LoadBalancer for the Gateway
 * [ ] Add Horizontal Pod Autoscaling for stateless services
-* [ ] Add GitHub Actions CI/CD
+* [x] Add GitHub Actions CI/CD
 * [ ] Use imagePullSecrets for a private container registry instead of a public Docker Hub repo
 
 ---
