@@ -61,3 +61,277 @@ jobs:
           DB_NAME_TEST: auth_db_test
           JWT_SECRET: test-secret-for-ci
         run: npm test
+
+  catalog-service:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: catalog_user
+          POSTGRES_PASSWORD: catalog_pass
+          POSTGRES_DB: catalog_db_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: catalog-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: catalog-service
+        run: npm install
+
+      - name: Create test database schema
+        run: |
+          PGPASSWORD=catalog_pass psql -h localhost -U catalog_user -d catalog_db_test -c "
+            CREATE TABLE products (
+              id SERIAL PRIMARY KEY,
+              name VARCHAR(255) NOT NULL,
+              description TEXT,
+              price NUMERIC(10,2) NOT NULL,
+              stock INTEGER NOT NULL DEFAULT 0,
+              created_at TIMESTAMP DEFAULT NOW()
+            );"
+
+      - name: Run tests
+        working-directory: catalog-service
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: catalog_user
+          DB_PASSWORD: catalog_pass
+          DB_NAME_TEST: catalog_db_test
+          ES_NODE: http://localhost:9200
+          JWT_SECRET: test-secret-for-ci
+        run: npm test
+
+  cart-service:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cart-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cart-service
+        run: npm install
+
+      - name: Run tests
+        working-directory: cart-service
+        env:
+          NODE_ENV: test
+          REDIS_URL: redis://localhost:6379
+          CATALOG_SERVICE_URL: http://localhost:4001
+          JWT_SECRET: test-secret-for-ci
+        run: npm test
+
+  orders-service:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: orders_db_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      rabbitmq:
+        image: rabbitmq:3-management
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: orders-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: orders-service
+        run: npm install
+
+      - name: Create test database schema
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d orders_db_test -c "
+            CREATE TABLE orders (
+              id SERIAL PRIMARY KEY,
+              user_id INTEGER NOT NULL,
+              items JSONB NOT NULL,
+              total_amount NUMERIC(10,2) NOT NULL,
+              status VARCHAR(20) NOT NULL DEFAULT 'pending',
+              created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE outbox_events (
+              id SERIAL PRIMARY KEY,
+              event_type VARCHAR(50) NOT NULL,
+              payload JSONB NOT NULL,
+              published BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at TIMESTAMP DEFAULT NOW(),
+              published_at TIMESTAMP
+            );"
+
+      - name: Run tests
+        working-directory: orders-service
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME_TEST: orders_db_test
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+          JWT_SECRET: test-secret-for-ci
+        run: npm test
+
+  payments-service:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: payments_db_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      rabbitmq:
+        image: rabbitmq:3-management
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: payments-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: payments-service
+        run: npm install
+
+      - name: Create test database schema
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d payments_db_test -c "
+            CREATE TABLE processed_orders (
+              order_id INTEGER PRIMARY KEY,
+              processed_at TIMESTAMP DEFAULT NOW()
+            );"
+
+      - name: Run tests
+        working-directory: payments-service
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME_TEST: payments_db_test
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+        run: npm test
+
+  gateway:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: gateway/package-lock.json
+
+      - name: Install dependencies
+        working-directory: gateway
+        run: npm install
+
+      - name: Run tests
+        working-directory: gateway
+        run: npm test
