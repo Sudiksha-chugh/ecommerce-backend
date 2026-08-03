@@ -49,6 +49,9 @@ jobs:
               password_hash VARCHAR(255) NOT NULL,
               created_at TIMESTAMP DEFAULT NOW()
             );"
+      - name: Verify schema was created correctly
+        run: |
+          PGPASSWORD=auth_pass psql -h localhost -U auth_user -d auth_db_test -c "\d users"
 
       - name: Run tests
         working-directory: auth-service
