@@ -72,4 +72,36 @@ app.post('/orders', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to create order' });
   }
 });
+app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
+  const orderId = req.params.id;
+  const userId = req.user.userId;
+
+  try {
+    const orderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const order = orderResult.rows[0];
+
+    if (order.user_id !== userId) {
+      return res.status(403).json({ error: 'You do not have permission to cancel this order' });
+    }
+
+    if (order.status !== 'pending') {
+      return res.status(409).json({ error: `Cannot cancel an order with status "${order.status}"` });
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE orders SET status = 'cancelled' WHERE id = $1 RETURNING *`,
+      [orderId]
+    );
+
+    res.status(200).json(updateResult.rows[0]);
+  } catch (err) {
+    console.error('Failed to cancel order:', err.message);
+    res.status(500).json({ error: 'Failed to cancel order' });
+  }
+});
 module.exports = app;
