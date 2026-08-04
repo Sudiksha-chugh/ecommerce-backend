@@ -24,7 +24,10 @@ describe('pollOnce', () => {
 
   it('publishes unpublished events and marks them published', async () => {
     const mockSendToQueue = jest.fn();
-    getChannel.mockReturnValue({ sendToQueue: mockSendToQueue });
+    getChannel.mockReturnValue({
+      assertQueue: jest.fn().mockResolvedValue(),
+      sendToQueue: mockSendToQueue,
+    });
 
     const event = await insertOutboxEvent({ id: 1, user_id: 5, total_amount: '99.99' });
 
@@ -54,6 +57,7 @@ describe('pollOnce', () => {
 
   it('leaves an event unpublished if sendToQueue throws, without crashing the poller', async () => {
     getChannel.mockReturnValue({
+      assertQueue: jest.fn().mockResolvedValue(),
       sendToQueue: jest.fn(() => {
         throw new Error('Simulated channel failure');
       }),
@@ -68,9 +72,11 @@ describe('pollOnce', () => {
   });
 
   it('does nothing when there are no unpublished events', async () => {
-    getChannel.mockReturnValue({ sendToQueue: jest.fn() });
+    getChannel.mockReturnValue({
+      assertQueue: jest.fn().mockResolvedValue(),
+      sendToQueue: jest.fn(),
+    });
 
-    
     await expect(pollOnce()).resolves.not.toThrow();
   });
 });

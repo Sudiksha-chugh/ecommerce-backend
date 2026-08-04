@@ -28,8 +28,10 @@ async function pollOnce() {
 
     for (const event of result.rows) {
       try {
+        await channel.assertQueue(event.event_type, { durable: true });
+
         channel.sendToQueue(
-          'order_placed',
+          event.event_type,
           Buffer.from(JSON.stringify(event.payload)),
           { persistent: true }
         );
@@ -39,7 +41,7 @@ async function pollOnce() {
           [event.id]
         );
 
-        console.log(`Outbox poller: published event ${event.id} (order ${event.payload.id})`);
+        console.log(`Outbox poller: published event ${event.id} to "${event.event_type}"`);
       } catch (err) {
         console.error(`Outbox poller: failed to publish event ${event.id}, will retry next cycle:`, err.message);
       }

@@ -53,9 +53,8 @@ app.post('/orders', authenticateToken, async (req, res) => {
     );
     const newOrder = orderResult.rows[0];
 
-    await client.query(
-      `INSERT INTO outbox_events (event_type, payload)
-       VALUES ($1, $2)`,
+   await client.query(
+      `INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)`,
       ['order_placed', JSON.stringify(newOrder)]
     );
 
@@ -76,30 +75,60 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
   const orderId = req.params.id;
   const userId = req.user.userId;
 
+  const client = await pool.connect();
+
   try {
-    const orderResult = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+    const orderResult = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
 
     if (orderResult.rows.length === 0) {
+      client.release();
       return res.status(404).json({ error: 'Order not found' });
     }
 
     const order = orderResult.rows[0];
 
     if (order.user_id !== userId) {
+      client.release();
       return res.status(403).json({ error: 'You do not have permission to cancel this order' });
     }
 
-    if (order.status !== 'pending') {
-      return res.status(409).json({ error: `Cannot cancel an order with status "${order.status}"` });
+    if (order.status === 'pending') {
+      const updateResult = await client.query(
+        `UPDATE orders SET status = 'cancelled' WHERE id = $1 RETURNING *`,
+        [orderId]
+      );
+      client.release();
+      return res.status(200).json(updateResult.rows[0]);
     }
 
-    const updateResult = await pool.query(
-      `UPDATE orders SET status = 'cancelled' WHERE id = $1 RETURNING *`,
-      [orderId]
-    );
+    if (order.status === 'succeeded') {
+      await client.query('BEGIN');
 
-    res.status(200).json(updateResult.rows[0]);
+      const updateResult = await client.query(
+        `UPDATE orders SET status = 'refund_pending' WHERE id = $1 RETURNING *`,
+        [orderId]
+      );
+
+      await client.query(
+        `INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)`,
+        ['refund_requested', JSON.stringify({
+          orderId: order.id,
+          userId: order.user_id,
+          amount: order.total_amount,
+        })]
+      );
+
+      await client.query('COMMIT');
+      client.release();
+
+      return res.status(202).json(updateResult.rows[0]);
+    }
+
+    client.release();
+    return res.status(409).json({ error: `Cannot cancel an order with status "${order.status}"` });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release(err);
     console.error('Failed to cancel order:', err.message);
     res.status(500).json({ error: 'Failed to cancel order' });
   }

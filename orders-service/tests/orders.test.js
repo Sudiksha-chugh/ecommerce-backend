@@ -167,10 +167,10 @@ describe('POST /orders', () => {
     expect(check.rows[0].status).toBe('cancelled');
   });
 
-  it('rejects cancelling an order that is no longer pending with 409', async () => {
+  it('rejects cancelling an order that is already cancelled with 409', async () => {
     const orderId = await createPendingOrder();
 
-    await pool.query(`UPDATE orders SET status = 'succeeded' WHERE id = $1`, [orderId]);
+    await pool.query(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, [orderId]);
 
     const res = await request(app)
       .patch(`/orders/${orderId}/cancel`)
@@ -178,6 +178,34 @@ describe('POST /orders', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.body.error).toBeDefined();
+  });
+  it('initiates a refund when cancelling a succeeded order, returns 202', async () => {
+    const orderId = await createPendingOrder();
+    await pool.query(`UPDATE orders SET status = 'succeeded' WHERE id = $1`, [orderId]);
+
+    const res = await request(app)
+      .patch(`/orders/${orderId}/cancel`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body.status).toBe('refund_pending');
+
+    const outboxCheck = await pool.query(
+      "SELECT * FROM outbox_events WHERE event_type = 'refund_requested' AND payload->>'orderId' = $1",
+      [String(orderId)]
+    );
+    expect(outboxCheck.rows.length).toBe(1);
+  });
+
+  it('rejects cancelling an order that is already refund_pending with 409', async () => {
+    const orderId = await createPendingOrder();
+    await pool.query(`UPDATE orders SET status = 'refund_pending' WHERE id = $1`, [orderId]);
+
+    const res = await request(app)
+      .patch(`/orders/${orderId}/cancel`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(409);
   });
 });
 });
