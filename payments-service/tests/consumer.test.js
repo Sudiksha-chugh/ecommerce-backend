@@ -37,6 +37,9 @@ describe('startConsumer', () => {
     expect(mockChannel.assertQueue).toHaveBeenCalledWith('order_placed', { durable: true });
     expect(mockChannel.assertQueue).toHaveBeenCalledWith('payment_processed', { durable: true });
     expect(mockChannel.assertQueue).toHaveBeenCalledWith('order_placed_dlq', { durable: true });
+    expect(mockChannel.assertQueue).toHaveBeenCalledWith('refund_requested', { durable: true });
+    expect(mockChannel.assertQueue).toHaveBeenCalledWith('refund_processed', { durable: true });
+    expect(mockChannel.assertQueue).toHaveBeenCalledWith('refund_requested_dlq', { durable: true });
     expect(mockChannel.prefetch).toHaveBeenCalledWith(1);
   });
 
@@ -129,7 +132,37 @@ describe('startConsumer', () => {
     const check = await pool.query('SELECT * FROM processed_orders WHERE order_id = $1', [500]);
     expect(check.rows.length).toBe(1);
   });
+  
+  it('processes a valid refund request and publishes the result', async () => {
+    await startConsumer();
 
+    const refundCallback = mockChannel.consume.mock.calls[1][1];
+    const fakeRefund = { orderId: 10, userId: 1, amount: '20.00' };
+    const fakeMsg = { content: Buffer.from(JSON.stringify(fakeRefund)) };
+
+    await refundCallback(fakeMsg);
+
+    expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+      'refund_processed',
+      expect.any(Buffer),
+      { persistent: true }
+    );
+    expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+  });
+
+  it('routes a malformed refund message to the refund DLQ and still acks it', async () => {
+    await startConsumer();
+
+    const refundCallback = mockChannel.consume.mock.calls[1][1];
+    const badMsg = { content: Buffer.from('not valid json{{{') };
+
+    await expect(refundCallback(badMsg)).resolves.not.toThrow();
+
+    const dlqCall = mockChannel.sendToQueue.mock.calls.find(call => call[0] === 'refund_requested_dlq');
+    expect(dlqCall).toBeDefined();
+    expect(mockChannel.ack).toHaveBeenCalledWith(badMsg);
+  });
+  
   it('skips processing (but still acks) an order it has already seen', async () => {
     await pool.query('INSERT INTO processed_orders (order_id) VALUES ($1)', [501]);
 

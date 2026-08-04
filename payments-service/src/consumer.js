@@ -1,5 +1,5 @@
 const amqp = require('amqplib');
-const { processPayment } = require('./payment-logic');
+const { processPayment, processRefund } = require('./payment-logic');
 const pool = require('./db');
 
 const RECONNECT_DELAY_MS = 3000;
@@ -12,13 +12,17 @@ async function startConsumer() {
     const incomingQueue = 'order_placed';
     const outgoingQueue = 'payment_processed';
     const dlq = 'order_placed_dlq';
-
+    const refundQueue = 'refund_requested';
+    const refundResultQueue = 'refund_processed';
+    const refundDlq = 'refund_requested_dlq';
     await channel.assertQueue(incomingQueue, { durable: true });
     await channel.assertQueue(outgoingQueue, { durable: true });
     await channel.assertQueue(dlq, { durable: true });
+    await channel.assertQueue(refundQueue, { durable: true });
+    await channel.assertQueue(refundResultQueue, { durable: true });
+    await channel.assertQueue(refundDlq, { durable: true });
     await channel.prefetch(1);
-
-    console.log(`payments-service listening on "${incomingQueue}"...`);
+    console.log(`payments-service listening on "${incomingQueue}" and "${refundQueue}"...`);
 
     connection.on('error', (err) => {
       console.error('RabbitMQ connection error, will reconnect:', err.message);
@@ -73,6 +77,43 @@ async function startConsumer() {
         );
 
         console.error(`Moved unprocessable message to "${dlq}"`);
+        channel.ack(msg);
+      }
+    });
+
+    channel.consume(refundQueue, async (msg) => {
+      if (msg === null) return;
+
+      try {
+        const refundRequest = JSON.parse(msg.content.toString());
+
+        console.log(`Received refund request for order ${refundRequest.orderId}`);
+
+        const refundResult = processRefund(refundRequest);
+
+        channel.sendToQueue(
+          refundResultQueue,
+          Buffer.from(JSON.stringify(refundResult)),
+          { persistent: true }
+        );
+
+        console.log(`Refund ${refundResult.status} for order ${refundResult.orderId}, published to "${refundResultQueue}"`);
+
+        channel.ack(msg);
+      } catch (err) {
+        console.error('Failed to process refund_requested message:', err.message);
+
+        channel.sendToQueue(
+          refundDlq,
+          Buffer.from(JSON.stringify({
+            originalMessage: msg.content.toString(),
+            error: err.message,
+            failedAt: new Date().toISOString(),
+          })),
+          { persistent: true }
+        );
+
+        console.error(`Moved unprocessable message to "${refundDlq}"`);
         channel.ack(msg);
       }
     });

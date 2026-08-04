@@ -1,3 +1,4 @@
+
 function processPayment(order) {
   const isSuccess = Math.random() < 0.9;
 
@@ -9,4 +10,14 @@ function processPayment(order) {
   };
 }
 
-module.exports = { processPayment };
+function processRefund(refundRequest) {
+  return {
+    orderId: refundRequest.orderId,
+    userId: refundRequest.userId,
+    amount: refundRequest.amount,
+    status: 'refunded',
+  };
+}
+
+module.exports = { processPayment, processRefund };
+
