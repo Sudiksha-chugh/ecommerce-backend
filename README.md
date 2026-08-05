@@ -554,6 +554,9 @@ In Kubernetes, the same pattern applies via Service names (identical hostnames, 
 
 ## ⚠️ Known Limitations
 
+### Rate Limiting Storage
+
+Rate limiting uses an in-memory store per gateway instance. If the gateway were ever scaled to multiple replicas (e.g., in Kubernetes), each instance tracks its own separate count, effectively multiplying the real limit by the replica count. A shared Redis-backed store (using the Redis instance already in this stack) would fix this and is the natural next step if horizontal scaling is added.
 
 ### Idempotency
 
@@ -590,7 +593,7 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [x] Add idempotency keys for order/payment processing
 * [ ] Add inventory management
 * [ ] Add order cancellation
-* [ ] Add API Gateway rate limiting
+* [x] Add API Gateway rate limiting
 * [ ] Add centralized logging
 * [ ] Add distributed tracing
 * [ ] Add Prometheus and Grafana monitoring
