@@ -5,13 +5,13 @@ const esClient = require('../src/es');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-function makeToken(userId) {
-  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_SECRET, { expiresIn: '1h' });
+function makeToken(userId, role = 'admin') {
+  return jwt.sign({ userId, email: `${userId}@example.com`, role }, process.env.JWT_SECRET, { expiresIn: '1h' });
 }
 
 describe('POST /products', () => {
   const token = makeToken(1);
-
+  const customerToken = makeToken(2, 'customer');
   afterEach(async () => {
     await pool.query('DELETE FROM products');
     await esClient.deleteByQuery({
@@ -21,6 +21,7 @@ describe('POST /products', () => {
     }).catch(() => {});
   });
 
+  
   it('rejects requests with no token with 401', async () => {
     const res = await request(app)
       .post('/products')
@@ -29,6 +30,14 @@ describe('POST /products', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('rejects requests from a non-admin user with 403', async () => {
+    const res = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({ name: 'Wireless Headphones', price: 149.99 });
+
+    expect(res.statusCode).toBe(403);
+  });
   it('creates a product in Postgres and indexes it in Elasticsearch', async () => {
     const res = await request(app)
       .post('/products')

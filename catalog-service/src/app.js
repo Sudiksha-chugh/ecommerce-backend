@@ -13,7 +13,13 @@ app.get('/health', (req, res) => {
 
 const authenticateToken = require('./middleware/auth');
 
-app.post('/products', authenticateToken, async (req, res) => {
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+app.post('/products', authenticateToken, requireAdmin, async (req, res) => {
   const { name, description, price, stock } = req.body;
 
   if (!name || price === undefined) {
