@@ -1,4 +1,5 @@
 const request = require('supertest');
+const jwt = require('jsonwebtoken');
 const app = require('../src/app');
 const pool = require('../src/db');
 
@@ -24,6 +25,15 @@ describe('POST /login', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.token).toBeDefined();
+  });
+
+  it('includes the role in the JWT payload', async () => {
+    const res = await request(app)
+      .post('/login')
+      .send({ email: 'logintest@example.com', password: 'correctPass123' });
+
+    const decoded = jwt.decode(res.body.token);
+    expect(decoded.role).toBe('customer');
   });
 
   it('rejects login with wrong password with 401', async () => {

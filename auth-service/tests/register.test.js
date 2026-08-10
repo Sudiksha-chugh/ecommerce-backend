@@ -1,4 +1,5 @@
 const request = require('supertest');
+const jwt = require('jsonwebtoken');
 const app = require('../src/app');
 const pool = require('../src/db');
 
@@ -19,6 +20,7 @@ describe('POST /register', () => {
     expect(res.statusCode).toBe(201);
     expect(res.body.email).toBe('test@example.com');
     expect(res.body.id).toBeDefined();
+    expect(res.body.role).toBe('customer');
     expect(res.body.password).toBeUndefined();
     expect(res.body.password_hash).toBeUndefined();
   });
@@ -41,4 +43,5 @@ describe('POST /register', () => {
 
     expect(res.statusCode).toBe(400);
   });
+
 });
