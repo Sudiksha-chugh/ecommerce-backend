@@ -3,6 +3,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
 const authenticateToken = require('./middleware/auth');
+const logger = require('./logger');
 
 const app = express();
 app.use(express.json());
@@ -31,7 +32,7 @@ app.post('/register', async (req, res) => {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'Email already registered' });
     }
-    console.error(err);
+       logger.error('Registration failed', { error: err.message, email });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -60,15 +61,16 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = jwt.sign(
+      const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
 
+    logger.info('User logged in', { userId: user.id, email: user.email, role: user.role });
     res.status(200).json({ token });
   } catch (err) {
-    console.error(err);
+      logger.error('Login failed', { error: err.message, email });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });

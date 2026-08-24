@@ -554,6 +554,10 @@ In Kubernetes, the same pattern applies via Service names (identical hostnames, 
 
 ## ⚠️ Known Limitations
 
+### Admin Role Assignment
+
+There is currently no API for promoting a user to `admin` — it requires a direct database update (`UPDATE users SET role = 'admin' WHERE email = ...`). A real system would need an invite-based or super-admin-only promotion flow.
+
 ### Rate Limiting Storage
 
 Rate limiting uses an in-memory store per gateway instance. If the gateway were ever scaled to multiple replicas (e.g., in Kubernetes), each instance tracks its own separate count, effectively multiplying the real limit by the replica count. A shared Redis-backed store (using the Redis instance already in this stack) would fix this and is the natural next step if horizontal scaling is added.
@@ -588,7 +592,7 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [x] Add RabbitMQ connection self-healing with backoff
 * [x] Add Kubernetes deployment manifests
 * [x] Add end-to-end integration tests (Postman)
-* [ ] Add role-based access control
+* [x] Add role-based access control
 * [ ] Implement payment status reconciliation
 * [x] Add idempotency keys for order/payment processing
 * [ ] Add inventory management

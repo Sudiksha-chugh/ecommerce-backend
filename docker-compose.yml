@@ -26,6 +26,7 @@ services:
       DB_NAME: auth_db
       JWT_SECRET: super-secret-dev-key-change-in-prod
       PORT: 4000
+      ES_NODE: http://elasticsearch:9200
     depends_on:
       - auth-db
 
