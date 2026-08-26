@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('./db');
 const esClient = require('./es');
+const logger = require('./logger');
 
 const app = express();
 app.use(express.json());
@@ -45,10 +46,10 @@ app.post('/products', authenticateToken, requireAdmin, async (req, res) => {
       },
       refresh: true,
     });
-
+    logger.info('Product created', { productId: product.id, name: product.name, createdBy: req.user.userId });
     res.status(201).json(product);
   } catch (err) {
-    console.error(err);
+    logger.error('Product creation failed', { error: err.message, name });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -76,10 +77,9 @@ app.get('/products/search', async (req, res) => {
       score: hit._score,
       ...hit._source,
     }));
-
     res.status(200).json(products);
   } catch (err) {
-    console.error(err);
+    logger.error('Product search failed', { error: err.message, query: q });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -91,9 +91,9 @@ app.get('/products/:id', async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    res.status(200).json(result.rows[0]);
+        res.status(200).json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    logger.error('Product lookup failed', { error: err.message, productId: req.params.id });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
