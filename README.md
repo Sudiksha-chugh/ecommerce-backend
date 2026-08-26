@@ -554,6 +554,10 @@ In Kubernetes, the same pattern applies via Service names (identical hostnames, 
 
 ## ⚠️ Known Limitations
 
+### Centralized Logging Coverage
+
+Structured logging via Winston + Elasticsearch is implemented and verified for auth-service only. The same pattern (shared `logger.js`, `console.error` → `logger.error`, `ES_NODE` env var, `--runInBand` for test stability) needs to be applied to catalog-service, cart-service, orders-service, payments-service, and the gateway to achieve full coverage. Also worth noting: test-run logs and real logs currently share the same `logs` index — a `NODE_ENV`-based index suffix (matching the database test-isolation pattern) would be a clean follow-up.
+
 ### Admin Role Assignment
 
 There is currently no API for promoting a user to `admin` — it requires a direct database update (`UPDATE users SET role = 'admin' WHERE email = ...`). A real system would need an invite-based or super-admin-only promotion flow.
@@ -598,7 +602,7 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [ ] Add inventory management
 * [ ] Add order cancellation
 * [x] Add API Gateway rate limiting
-* [ ] Add centralized logging
+* [x]  Add centralized logging
 * [ ] Add distributed tracing
 * [ ] Add Prometheus and Grafana monitoring
 * [ ] Add PersistentVolumeClaim for RabbitMQ in Kubernetes
