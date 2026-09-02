@@ -2,6 +2,7 @@ const express = require('express');
 const { client } = require('./redisClient');
 const catalogClient = require('./catalogClient');
 const authenticateToken = require('./middleware/auth');
+const logger = require('./logger');
 
 const app = express();
 app.use(express.json());
@@ -22,10 +23,10 @@ app.post('/cart/items', authenticateToken, async (req, res) => {
   try {
     product = await catalogClient.getProduct(productId);
   } catch (err) {
-    if (err.response && err.response.status === 404) {
+        if (err.response && err.response.status === 404) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    console.error('Failed to reach catalog-service:', err.message);
+    logger.error('Failed to reach catalog-service', { error: err.message, productId });
     return res.status(503).json({ error: 'Catalog service unavailable' });
   }
 
@@ -42,6 +43,7 @@ app.post('/cart/items', authenticateToken, async (req, res) => {
 
   await client.set(cartKey, JSON.stringify(cart));
 
+  logger.info('Item added to cart', { userId, productId: product.id, quantity });
   res.status(201).json(cart);
 });
 

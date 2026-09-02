@@ -8,7 +8,7 @@ const esTransportOpts = {
   index: 'logs',
   transformer: (logData) => ({
     '@timestamp': new Date().toISOString(),
-    service: 'auth-service',
+    service: 'cart-service',
     level: logData.level,
     message: logData.message,
     meta: logData.meta,
@@ -28,9 +28,13 @@ if (process.env.NODE_ENV !== 'test') {
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.json(),
-  defaultMeta: { service: 'auth-service' },
+  defaultMeta: { service: 'cart-service' },
   transports,
   exitOnError: false,
+});
+
+logger.on('error', (err) => {
+  console.error('Logger transport error (non-fatal):', err.message || err);
 });
 
 module.exports = logger;

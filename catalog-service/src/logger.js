@@ -15,16 +15,21 @@ const esTransportOpts = {
   }),
 };
 
+const transports = [
+  new winston.transports.Console({
+    format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+  }),
+];
+
+if (process.env.NODE_ENV !== 'test') {
+  transports.push(new ElasticsearchTransport(esTransportOpts));
+}
+
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.json(),
   defaultMeta: { service: 'catalog-service' },
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
-    }),
-    new ElasticsearchTransport(esTransportOpts),
-  ],
+  transports,
   exitOnError: false,
 });
 
