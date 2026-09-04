@@ -1,6 +1,7 @@
 const amqp = require('amqplib');
 const { processPayment, processRefund } = require('./payment-logic');
 const pool = require('./db');
+const logger = require('./logger');
 
 const RECONNECT_DELAY_MS = 3000;
 
@@ -22,14 +23,14 @@ async function startConsumer() {
     await channel.assertQueue(refundResultQueue, { durable: true });
     await channel.assertQueue(refundDlq, { durable: true });
     await channel.prefetch(1);
-    console.log(`payments-service listening on "${incomingQueue}" and "${refundQueue}"...`);
+       logger.info('payments-service listening', { queues: [incomingQueue, refundQueue] });
 
     connection.on('error', (err) => {
-      console.error('RabbitMQ connection error, will reconnect:', err.message);
+      logger.error('RabbitMQ connection error, will reconnect', { error: err.message });
     });
 
     connection.on('close', () => {
-      console.error(`RabbitMQ connection closed, reconnecting in ${RECONNECT_DELAY_MS}ms...`);
+      logger.warn('RabbitMQ connection closed, reconnecting', { delayMs: RECONNECT_DELAY_MS });
       setTimeout(startConsumer, RECONNECT_DELAY_MS);
     });
 
@@ -42,15 +43,15 @@ async function startConsumer() {
         try {
           await pool.query('INSERT INTO processed_orders (order_id) VALUES ($1)', [order.id]);
         } catch (dbErr) {
-          if (dbErr.code === '23505') {
-            console.log(`Order ${order.id} already processed, skipping (idempotency check)`);
+                  if (dbErr.code === '23505') {
+            logger.info('Order already processed, skipping (idempotency check)', { orderId: order.id });
             channel.ack(msg);
             return;
           }
           throw dbErr;
         }
 
-        console.log(`Received order ${order.id} for payment processing`);
+        logger.info('Received order for payment processing', { orderId: order.id });
 
         const paymentResult = processPayment(order);
 
@@ -60,11 +61,11 @@ async function startConsumer() {
           { persistent: true }
         );
 
-        console.log(`Payment ${paymentResult.status} for order ${order.id}, published to "${outgoingQueue}"`);
+        logger.info('Payment processed', { orderId: order.id, status: paymentResult.status });
 
         channel.ack(msg);
       } catch (err) {
-        console.error('Failed to process order_placed message:', err.message);
+        logger.error('Failed to process order_placed message', { error: err.message });
 
         channel.sendToQueue(
           dlq,
@@ -76,7 +77,7 @@ async function startConsumer() {
           { persistent: true }
         );
 
-        console.error(`Moved unprocessable message to "${dlq}"`);
+        logger.warn('Moved unprocessable message to DLQ', { dlq });
         channel.ack(msg);
       }
     });
@@ -86,8 +87,7 @@ async function startConsumer() {
 
       try {
         const refundRequest = JSON.parse(msg.content.toString());
-
-        console.log(`Received refund request for order ${refundRequest.orderId}`);
+              logger.info('Received refund request', { orderId: refundRequest.orderId });
 
         const refundResult = processRefund(refundRequest);
 
@@ -97,11 +97,11 @@ async function startConsumer() {
           { persistent: true }
         );
 
-        console.log(`Refund ${refundResult.status} for order ${refundResult.orderId}, published to "${refundResultQueue}"`);
+        logger.info('Refund processed', { orderId: refundResult.orderId, status: refundResult.status });
 
         channel.ack(msg);
       } catch (err) {
-        console.error('Failed to process refund_requested message:', err.message);
+        logger.error('Failed to process refund_requested message', { error: err.message });
 
         channel.sendToQueue(
           refundDlq,
@@ -113,12 +113,12 @@ async function startConsumer() {
           { persistent: true }
         );
 
-        console.error(`Moved unprocessable message to "${refundDlq}"`);
+        logger.warn('Moved unprocessable message to DLQ', { dlq: refundDlq });
         channel.ack(msg);
       }
     });
   } catch (err) {
-    console.error(`Failed to connect to RabbitMQ, retrying in ${RECONNECT_DELAY_MS}ms:`, err.message);
+    logger.error('Failed to connect to RabbitMQ, retrying', { delayMs: RECONNECT_DELAY_MS, error: err.message });
     setTimeout(startConsumer, RECONNECT_DELAY_MS);
   }
 }

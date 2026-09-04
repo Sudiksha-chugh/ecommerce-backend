@@ -162,6 +162,7 @@ services:
     ports:
       - "4004:4004"
     environment:
+      ES_NODE: http://elasticsearch:9200
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       DB_HOST: payments-db
       DB_PORT: 5432
