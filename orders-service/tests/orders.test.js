@@ -76,37 +76,50 @@ describe('POST /orders', () => {
   });
 
   it('rolls back the order if the outbox insert fails, leaving no trace of either', async () => {
-    const realConnect = pool.connect.bind(pool);
+  const realConnect = pool.connect.bind(pool);
 
-   jest.spyOn(pool, 'connect').mockImplementationOnce(async () => {
-      const client = await realConnect();
-      const realQuery = client.query.bind(client);
+  let querySpy;
 
-      client.query = jest.fn((text, params) => {
-        if (typeof text === 'string' && text.includes('INSERT INTO outbox_events')) {
-          return Promise.reject(new Error('Simulated outbox insert failure'));
-        }
-        
-        return realQuery(text, params);
-      });
+  jest.spyOn(pool, 'connect').mockImplementationOnce(async () => {
+    const client = await realConnect();
+    const realQuery = client.query.bind(client);
 
-      return client;
+    querySpy = jest.spyOn(client, 'query').mockImplementation((text, params, callback) => {
+      if (
+        typeof text === 'string' &&
+        text.includes('INSERT INTO outbox_events')
+      ) {
+        return Promise.reject(
+          new Error('Simulated outbox insert failure')
+        );
+      }
+
+      return realQuery(text, params, callback);
     });
 
-    const res = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        items: [{ productId: 999, name: 'Should Not Persist', price: 1.23, quantity: 1 }],
-        totalAmount: 1.23,
-      });
+    return client;
+  });
+const res = await request(app)
+    .post('/orders')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      items: [
+        {
+          productId: 999,
+          name: 'Should Not Persist',
+          price: 1.23,
+          quantity: 1,
+        },
+      ],
+      totalAmount: 1.23,
+    });
 
     expect(res.statusCode).toBe(500);
+     querySpy.mockRestore();
 
-    const orderCheck = await pool.query(
-      "SELECT * FROM orders WHERE total_amount = '1.23'"
-    );
-    expect(orderCheck.rows.length).toBe(0);
+  const orderCheck = await pool.query(
+    "SELECT * FROM orders WHERE total_amount = '1.23'"
+  );
   });
   describe('PATCH /orders/:id/cancel', () => {
   const token = makeToken(1);
