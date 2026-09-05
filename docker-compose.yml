@@ -182,6 +182,7 @@ services:
       - "8080:8080"
     environment:
       PORT: 8080
+      ES_NODE: http://elasticsearch:9200
       AUTH_SERVICE_URL: http://auth-service:4000
       CATALOG_SERVICE_URL: http://catalog-service:4001
       CART_SERVICE_URL: http://cart-service:4002

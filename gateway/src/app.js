@@ -1,8 +1,8 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const rateLimit = require('express-rate-limit');
+const logger = require('./logger');
 require('dotenv').config();
-
 const app = express();
 
 const generalLimiter = rateLimit({
@@ -32,7 +32,7 @@ function proxyOptions(target, prefix) {
     pathRewrite: prefix ? (path) => prefix + path : undefined,
     on: {
       error: (err, req, res) => {
-        console.error(`Proxy error reaching ${target}:`, err.message);
+        logger.error('Proxy error reaching upstream service', { target, error: err.message, path: req.originalUrl });
         if (!res.headersSent) {
           res.status(503).json({ error: 'Upstream service unavailable' });
         }
@@ -40,7 +40,6 @@ function proxyOptions(target, prefix) {
     },
   };
 }
-
 app.use('/auth', authLimiter, createProxyMiddleware(proxyOptions(process.env.AUTH_SERVICE_URL, null)));
 app.use('/products', generalLimiter, createProxyMiddleware(proxyOptions(process.env.CATALOG_SERVICE_URL, '/products')));
 app.use('/cart', generalLimiter, createProxyMiddleware(proxyOptions(process.env.CART_SERVICE_URL, '/cart')));
