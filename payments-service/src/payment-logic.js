@@ -1,4 +1,3 @@
-
 function processPayment(order) {
   const isSuccess = Math.random() < 0.9;
 
@@ -7,6 +6,7 @@ function processPayment(order) {
     userId: order.user_id,
     amount: order.total_amount,
     status: isSuccess ? 'succeeded' : 'failed',
+    transactionId: `txn_${order.id}_${Date.now()}`,
   };
 }
 
@@ -20,4 +20,3 @@ function processRefund(refundRequest) {
 }
 
 module.exports = { processPayment, processRefund };
-

@@ -55,6 +55,24 @@ async function startConsumer() {
 
         const paymentResult = processPayment(order);
 
+        await pool.query(
+          `INSERT INTO payments
+           (order_id, user_id, amount, status, transaction_id)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (order_id)
+           DO UPDATE SET
+             status = EXCLUDED.status,
+             transaction_id = EXCLUDED.transaction_id,
+             updated_at = NOW()`,
+          [
+            paymentResult.orderId,
+            paymentResult.userId,
+            paymentResult.amount,
+            paymentResult.status,
+            paymentResult.transactionId,
+          ]
+        );
+
         channel.sendToQueue(
           outgoingQueue,
           Buffer.from(JSON.stringify(paymentResult)),

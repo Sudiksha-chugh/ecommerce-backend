@@ -13,6 +13,78 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
+// Reconcile order status with payment status
+app.get('/orders/:id/reconciliation', authenticateToken, async (req, res) => {
+  const orderId = req.params.id;
+  const userId = req.user.userId;
+
+  try {
+    const orderResult = await pool.query(
+      `SELECT id, user_id, total_amount, status
+       FROM orders
+       WHERE id = $1`,
+      [orderId]
+    );
+
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Order not found',
+      });
+    }
+
+    const order = orderResult.rows[0];
+
+    if (order.user_id !== userId) {
+      return res.status(403).json({
+        error: 'You do not have permission to view this order',
+      });
+    }
+
+    const paymentResponse = await fetch(
+      `http://payments-service:4004/payments/${orderId}`
+    );
+
+    if (paymentResponse.status === 404) {
+      return res.status(200).json({
+        orderId: order.id,
+        orderStatus: order.status,
+        paymentStatus: null,
+        consistent: false,
+        reason: 'Payment not found',
+      });
+    }
+
+    if (!paymentResponse.ok) {
+      throw new Error(
+        `Payment service returned ${paymentResponse.status}`
+      );
+    }
+
+    const payment = await paymentResponse.json();
+
+    const consistent =
+      order.status === payment.status;
+
+    return res.status(200).json({
+      orderId: order.id,
+      orderStatus: order.status,
+      paymentStatus: payment.status,
+      transactionId: payment.transaction_id,
+      consistent,
+    });
+  } catch (err) {
+    logger.error('Order reconciliation failed', {
+      orderId,
+      userId,
+      error: err.message,
+    });
+
+    return res.status(500).json({
+      error: 'Failed to reconcile order',
+    });
+  }
+});
+
 // Create order
 app.post('/orders', authenticateToken, async (req, res) => {
   const userId = req.user.userId;
