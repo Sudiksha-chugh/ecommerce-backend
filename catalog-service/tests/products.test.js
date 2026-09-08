@@ -17,6 +17,8 @@ function makeToken(userId, role = 'admin') {
   );
 }
 
+const internalServiceKey = process.env.INTERNAL_SERVICE_KEY;
+
 describe('POST /products', () => {
   const token = makeToken(1);
   const customerToken = makeToken(2, 'customer');
@@ -260,6 +262,7 @@ describe('POST /products/decrement-stock', () => {
     const res = await request(app)
       .post('/products/decrement-stock')
       .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
       .send({
         items: [
           {
@@ -285,6 +288,7 @@ describe('POST /products/decrement-stock', () => {
     const res = await request(app)
       .post('/products/decrement-stock')
       .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
       .send({
         items: [
           {
@@ -308,6 +312,7 @@ describe('POST /products/decrement-stock', () => {
     const res = await request(app)
       .post('/products/decrement-stock')
       .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
       .send({
         items: [
           {
@@ -360,6 +365,7 @@ describe('POST /products/decrement-stock', () => {
     const res = await request(app)
       .post('/products/decrement-stock')
       .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
       .send({
         items: [
           {
@@ -394,28 +400,6 @@ describe('POST /products/restore-stock', () => {
   const token = makeToken(1);
 
   let productId;
- it('rejects a negative quantity', async () => {
-  const res = await request(app)
-    .post('/products/restore-stock')
-    .set('Authorization', `Bearer ${token}`)
-    .send({
-      items: [
-        {
-          productId,
-          quantity: -3,
-        },
-      ],
-    });
-
-  expect(res.statusCode).toBe(400);
-
-  const dbResult = await pool.query(
-    'SELECT stock FROM products WHERE id = $1',
-    [productId]
-  );
-
-  expect(dbResult.rows[0].stock).toBe(7);
-});
 
   beforeEach(async () => {
     const result = await pool.query(
@@ -437,82 +421,111 @@ describe('POST /products/restore-stock', () => {
   afterEach(async () => {
     await pool.query('DELETE FROM products');
   });
-  
+
+  it('rejects a negative quantity', async () => {
+    const res = await request(app)
+      .post('/products/restore-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        items: [
+          {
+            productId,
+            quantity: -3,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(400);
+
+    const dbResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(dbResult.rows[0].stock).toBe(7);
+  });
+
   it('rejects restoring stock for a product that does not exist', async () => {
-  const res = await request(app)
-    .post('/products/restore-stock')
-    .set('Authorization', `Bearer ${token}`)
-    .send({
-      items: [
-        {
-          productId: 999999,
-          quantity: 3,
-        },
-      ],
-    });
+    const res = await request(app)
+      .post('/products/restore-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        items: [
+          {
+            productId: 999999,
+            quantity: 3,
+          },
+        ],
+      });
 
-  expect(res.statusCode).toBe(404);
-});
-it('rolls back all restores if one product does not exist', async () => {
-  const productA = await request(app)
-    .post('/products')
-    .set('Authorization', `Bearer ${token}`)
-    .send({
-      name: 'Restore Product A',
-      description: 'Atomic restore test A',
-      price: 100,
-      stock: 10,
-    });
+    expect(res.statusCode).toBe(404);
+  });
 
-  const productB = await request(app)
-    .post('/products')
-    .set('Authorization', `Bearer ${token}`)
-    .send({
-      name: 'Restore Product B',
-      description: 'Atomic restore test B',
-      price: 200,
-      stock: 5,
-    });
+  it('rolls back all restores if one product does not exist', async () => {
+    const productA = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Restore Product A',
+        description: 'Atomic restore test A',
+        price: 100,
+        stock: 10,
+      });
 
-  const productAId = productA.body.id;
-  const productBId = productB.body.id;
+    const productB = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Restore Product B',
+        description: 'Atomic restore test B',
+        price: 200,
+        stock: 5,
+      });
 
-  const res = await request(app)
-    .post('/products/restore-stock')
-    .set('Authorization', `Bearer ${token}`)
-    .send({
-      items: [
-        {
-          productId: productAId,
-          quantity: 3,
-        },
-        {
-          productId: 999999,
-          quantity: 3,
-        },
-      ],
-    });
+    const productAId = productA.body.id;
+    const productBId = productB.body.id;
 
-  expect(res.statusCode).toBe(404);
+    const res = await request(app)
+      .post('/products/restore-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        items: [
+          {
+            productId: productAId,
+            quantity: 3,
+          },
+          {
+            productId: 999999,
+            quantity: 3,
+          },
+        ],
+      });
 
-  const resultA = await pool.query(
-    'SELECT stock FROM products WHERE id = $1',
-    [productAId]
-  );
+    expect(res.statusCode).toBe(404);
 
-  expect(resultA.rows[0].stock).toBe(10);
+    const resultA = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productAId]
+    );
 
-  const resultB = await pool.query(
-    'SELECT stock FROM products WHERE id = $1',
-    [productBId]
-  );
+    expect(resultA.rows[0].stock).toBe(10);
 
-  expect(resultB.rows[0].stock).toBe(5);
-});
+    const resultB = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productBId]
+    );
+
+    expect(resultB.rows[0].stock).toBe(5);
+  });
+
   it('restores product stock by the requested quantity', async () => {
     const res = await request(app)
       .post('/products/restore-stock')
       .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', internalServiceKey)
       .send({
         items: [
           {
