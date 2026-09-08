@@ -235,19 +235,22 @@ app.post('/products/restore-stock', authenticateToken, async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Sync updated products to Elasticsearch
-    for (const product of updatedProducts) {
-      await esClient.index({
-        index: PRODUCTS_INDEX,
-        id: product.id.toString(),
-        document: product,
-      });
-    }
+   // Sync updated products to Elasticsearch
+for (const product of updatedProducts) {
+  await esClient.index({
+    index: PRODUCTS_INDEX,
+    id: product.id.toString(),
+    document: {
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      stock: product.stock,
+    },
+  });
+}
 
-    logger.info({
-      message: 'Stock restored',
-      items,
-    });
+    logger.info('Stock restored',
+     {items});
 
     return res.status(200).json({
       message: 'Stock restored successfully',
