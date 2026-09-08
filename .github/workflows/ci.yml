@@ -124,6 +124,17 @@ jobs:
               created_at TIMESTAMP DEFAULT NOW()
             );"
 
+      - name: Check internal service key
+        env:
+         INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+        run: |
+          if [ -z "$INTERNAL_SERVICE_KEY"  ]; then
+           echo "INTERNAL_SERVICE_KEY is NOT set"
+           exit 1
+          else
+           echo "INTERNAL_SERVICE_KEY is set"
+          fi
+
       - name: Run tests
         working-directory: catalog-service
         env:
