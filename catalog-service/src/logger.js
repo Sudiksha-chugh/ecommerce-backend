@@ -3,7 +3,7 @@ const { ElasticsearchTransport } = require('winston-elasticsearch');
 require('dotenv').config();
 
 const esTransportOpts = {
-  level: 'info',
+    level: 'info',
   clientOpts: { node: process.env.ES_NODE || 'http://localhost:9200' },
   index: 'logs',
   transformer: (logData) => ({
@@ -11,7 +11,7 @@ const esTransportOpts = {
     service: 'catalog-service',
     level: logData.level,
     message: logData.message,
-    meta: logData.meta,
+    meta: logData.meta || {},
   }),
 };
 
@@ -26,7 +26,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 const logger = winston.createLogger({
-  level: 'info',
+    level: 'info',
   format: winston.format.json(),
   defaultMeta: { service: 'catalog-service' },
   transports,
