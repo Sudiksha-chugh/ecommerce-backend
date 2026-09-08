@@ -1,6 +1,8 @@
-
 function processPayment(order) {
-  const isSuccess = Math.random() < 0.9;
+  const isSuccess =
+    process.env.FORCE_PAYMENT_FAILURE === 'true'
+      ? false
+      : Math.random() < 0.9;
 
   return {
     orderId: order.id,

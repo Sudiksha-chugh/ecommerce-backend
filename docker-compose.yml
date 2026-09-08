@@ -64,6 +64,7 @@ services:
       - "4001:4001"
     environment:
       DB_HOST: catalog-db
+      INTERNAL_SERVICE_KEY: 3cb3932caf29d55b87d0a6d95a10a9297e81630af641b9406cb3eccfbcbd1416
       DB_PORT: 5432
       DB_USER: catalog_user
       DB_PASSWORD: catalog_pass
@@ -170,6 +171,8 @@ services:
       DB_PASSWORD: postgres
       DB_NAME: payments_db
       PORT: 4004
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY}
+      CATALOG_SERVICE_URL: http://catalog-service:4001
     depends_on:
       - rabbitmq
       - payments-db

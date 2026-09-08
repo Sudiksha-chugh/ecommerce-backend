@@ -2,6 +2,7 @@ const amqp = require('amqplib');
 const { processPayment, processRefund } = require('./payment-logic');
 const pool = require('./db');
 const logger = require('./logger');
+const { decrementStock, restoreStock } = require('./catalogClient');
 
 const RECONNECT_DELAY_MS = 3000;
 
@@ -16,78 +17,145 @@ async function startConsumer() {
     const refundQueue = 'refund_requested';
     const refundResultQueue = 'refund_processed';
     const refundDlq = 'refund_requested_dlq';
+
     await channel.assertQueue(incomingQueue, { durable: true });
     await channel.assertQueue(outgoingQueue, { durable: true });
     await channel.assertQueue(dlq, { durable: true });
     await channel.assertQueue(refundQueue, { durable: true });
     await channel.assertQueue(refundResultQueue, { durable: true });
     await channel.assertQueue(refundDlq, { durable: true });
+
     await channel.prefetch(1);
-       logger.info('payments-service listening', { queues: [incomingQueue, refundQueue] });
+
+    logger.info('payments-service listening', {
+      queues: [incomingQueue, refundQueue],
+    });
 
     connection.on('error', (err) => {
-      logger.error('RabbitMQ connection error, will reconnect', { error: err.message });
+      logger.error('RabbitMQ connection error, will reconnect', {
+        error: err.message,
+      });
     });
 
     connection.on('close', () => {
-      logger.warn('RabbitMQ connection closed, reconnecting', { delayMs: RECONNECT_DELAY_MS });
+      logger.warn('RabbitMQ connection closed, reconnecting', {
+        delayMs: RECONNECT_DELAY_MS,
+      });
+
       setTimeout(startConsumer, RECONNECT_DELAY_MS);
     });
 
+    // Order payment consumer
     channel.consume(incomingQueue, async (msg) => {
       if (msg === null) return;
 
       try {
         const order = JSON.parse(msg.content.toString());
 
-        try {
-          await pool.query('INSERT INTO processed_orders (order_id) VALUES ($1)', [order.id]);
-        } catch (dbErr) {
-                  if (dbErr.code === '23505') {
-            logger.info('Order already processed, skipping (idempotency check)', { orderId: order.id });
-            channel.ack(msg);
-            return;
-          }
-          throw dbErr;
+        logger.info('Received order for payment processing', {
+          orderId: order.id,
+        });
+
+        // Check whether this order was already processed
+        const existingOrder = await pool.query(
+          'SELECT order_id FROM processed_orders WHERE order_id = $1',
+          [order.id]
+        );
+
+        if (existingOrder.rows.length > 0) {
+          logger.info('Order already processed, skipping (idempotency check)', {
+            orderId: order.id,
+          });
+
+          channel.ack(msg);
+          return;
         }
 
-        logger.info('Received order for payment processing', { orderId: order.id });
+        // Convert order items into inventory items
+        const stockItems = order.items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+        }));
 
+        // Decrement inventory
+        await decrementStock(stockItems);
+
+        logger.info('Stock decremented successfully', {
+          orderId: order.id,
+          items: stockItems,
+        });
+
+        // Process payment
         const paymentResult = processPayment(order);
 
+        // Restore inventory if payment failed
+        if (paymentResult.status === 'failed') {
+          await restoreStock(stockItems);
+
+          logger.info('Stock restored after payment failure', {
+            orderId: order.id,
+            items: stockItems,
+          });
+        }
+
+        // Publish payment result
         channel.sendToQueue(
           outgoingQueue,
           Buffer.from(JSON.stringify(paymentResult)),
           { persistent: true }
         );
 
-        logger.info('Payment processed', { orderId: order.id, status: paymentResult.status });
+        logger.info('Payment processed', {
+          orderId: order.id,
+          status: paymentResult.status,
+        });
+
+        // Mark order as processed only after the workflow completes
+        await pool.query(
+          'INSERT INTO processed_orders (order_id) VALUES ($1)',
+          [order.id]
+        );
+
+        logger.info('Order marked as processed', {
+          orderId: order.id,
+        });
 
         channel.ack(msg);
       } catch (err) {
-        logger.error('Failed to process order_placed message', { error: err.message });
+        logger.error('Failed to process order_placed message', {
+          error: err.message,
+        });
 
         channel.sendToQueue(
           dlq,
-          Buffer.from(JSON.stringify({
-            originalMessage: msg.content.toString(),
-            error: err.message,
-            failedAt: new Date().toISOString(),
-          })),
+          Buffer.from(
+            JSON.stringify({
+              originalMessage: msg.content.toString(),
+              error: err.message,
+              failedAt: new Date().toISOString(),
+            })
+          ),
           { persistent: true }
         );
 
-        logger.warn('Moved unprocessable message to DLQ', { dlq });
+        logger.warn('Moved unprocessable message to DLQ', {
+          dlq,
+        });
+
         channel.ack(msg);
       }
     });
 
+    // Refund consumer
     channel.consume(refundQueue, async (msg) => {
       if (msg === null) return;
 
       try {
         const refundRequest = JSON.parse(msg.content.toString());
-              logger.info('Received refund request', { orderId: refundRequest.orderId });
+
+        logger.info('Received refund request', {
+          orderId: refundRequest.orderId,
+        });
 
         const refundResult = processRefund(refundRequest);
 
@@ -97,28 +165,42 @@ async function startConsumer() {
           { persistent: true }
         );
 
-        logger.info('Refund processed', { orderId: refundResult.orderId, status: refundResult.status });
+        logger.info('Refund processed', {
+          orderId: refundResult.orderId,
+          status: refundResult.status,
+        });
 
         channel.ack(msg);
       } catch (err) {
-        logger.error('Failed to process refund_requested message', { error: err.message });
+        logger.error('Failed to process refund_requested message', {
+          error: err.message,
+        });
 
         channel.sendToQueue(
           refundDlq,
-          Buffer.from(JSON.stringify({
-            originalMessage: msg.content.toString(),
-            error: err.message,
-            failedAt: new Date().toISOString(),
-          })),
+          Buffer.from(
+            JSON.stringify({
+              originalMessage: msg.content.toString(),
+              error: err.message,
+              failedAt: new Date().toISOString(),
+            })
+          ),
           { persistent: true }
         );
 
-        logger.warn('Moved unprocessable message to DLQ', { dlq: refundDlq });
+        logger.warn('Moved unprocessable message to DLQ', {
+          dlq: refundDlq,
+        });
+
         channel.ack(msg);
       }
     });
   } catch (err) {
-    logger.error('Failed to connect to RabbitMQ, retrying', { delayMs: RECONNECT_DELAY_MS, error: err.message });
+    logger.error('Failed to connect to RabbitMQ, retrying', {
+      delayMs: RECONNECT_DELAY_MS,
+      error: err.message,
+    });
+
     setTimeout(startConsumer, RECONNECT_DELAY_MS);
   }
 }

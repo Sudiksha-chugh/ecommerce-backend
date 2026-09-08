@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('./db');
 const esClient = require('./es');
 const logger = require('./logger');
+const authenticateInternalService = require('./middleware/internalAuth');
 
 const app = express();
 app.use(express.json());
@@ -97,7 +98,7 @@ app.get('/products/:id', async (req, res) => {
   }
 });
 
-app.post('/products/decrement-stock', authenticateToken, async (req, res) => {
+app.post('/products/decrement-stock', authenticateInternalService, async (req, res) => {
   const { items } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -182,7 +183,7 @@ app.post('/products/decrement-stock', authenticateToken, async (req, res) => {
     client.release();
   }
 });
-app.post('/products/restore-stock', authenticateToken, async (req, res) => {
+app.post('/products/restore-stock', authenticateInternalService, async (req, res) => {
   const { items } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
