@@ -1,6 +1,10 @@
 jest.mock('amqplib');
-jest.useFakeTimers();
 
+jest.mock('../src/catalogClient', () => ({
+  decrementStock: jest.fn().mockResolvedValue({}),
+  restoreStock: jest.fn().mockResolvedValue({}),
+}));
+jest.useFakeTimers();
 const amqp = require('amqplib');
 const { startConsumer } = require('../src/consumer');
 
