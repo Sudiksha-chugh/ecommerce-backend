@@ -6,26 +6,40 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 function makeToken(userId, role = 'admin') {
-  return jwt.sign({ userId, email: `${userId}@example.com`, role }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  return jwt.sign(
+    {
+      userId,
+      email: `${userId}@example.com`,
+      role,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '1h' }
+  );
 }
 
 describe('POST /products', () => {
   const token = makeToken(1);
   const customerToken = makeToken(2, 'customer');
+
   afterEach(async () => {
     await pool.query('DELETE FROM products');
-    await esClient.deleteByQuery({
-      index: 'products_test',
-      query: { match_all: {} },
-      refresh: true,
-    }).catch(() => {});
+
+    await esClient
+      .deleteByQuery({
+        index: 'products_test',
+        query: { match_all: {} },
+        refresh: true,
+      })
+      .catch(() => {});
   });
 
-  
   it('rejects requests with no token with 401', async () => {
     const res = await request(app)
       .post('/products')
-      .send({ name: 'Wireless Headphones', price: 149.99 });
+      .send({
+        name: 'Wireless Headphones',
+        price: 149.99,
+      });
 
     expect(res.statusCode).toBe(401);
   });
@@ -34,10 +48,14 @@ describe('POST /products', () => {
     const res = await request(app)
       .post('/products')
       .set('Authorization', `Bearer ${customerToken}`)
-      .send({ name: 'Wireless Headphones', price: 149.99 });
+      .send({
+        name: 'Wireless Headphones',
+        price: 149.99,
+      });
 
     expect(res.statusCode).toBe(403);
   });
+
   it('creates a product in Postgres and indexes it in Elasticsearch', async () => {
     const res = await request(app)
       .post('/products')
@@ -53,13 +71,18 @@ describe('POST /products', () => {
     expect(res.body.id).toBeDefined();
     expect(res.body.name).toBe('Wireless Headphones');
 
-    const dbResult = await pool.query('SELECT * FROM products WHERE id = $1', [res.body.id]);
+    const dbResult = await pool.query(
+      'SELECT * FROM products WHERE id = $1',
+      [res.body.id]
+    );
+
     expect(dbResult.rows.length).toBe(1);
 
     const esResult = await esClient.get({
       index: 'products_test',
       id: String(res.body.id),
     });
+
     expect(esResult._source.name).toBe('Wireless Headphones');
   });
 
@@ -67,7 +90,9 @@ describe('POST /products', () => {
     const res = await request(app)
       .post('/products')
       .set('Authorization', `Bearer ${token}`)
-      .send({ description: 'Missing name and price' });
+      .send({
+        description: 'Missing name and price',
+      });
 
     expect(res.statusCode).toBe(400);
   });
@@ -78,11 +103,20 @@ describe('GET /products/:id', () => {
   let productId;
 
   beforeEach(async () => {
-    const res = await request(app)
-      .post('/products')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Test Speaker', description: 'A speaker', price: 79.99, stock: 10 });
-    productId = res.body.id;
+    const result = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [
+        'Test Product',
+        'Product for testing',
+        100,
+        10,
+      ]
+    );
+
+    productId = result.rows[0].id;
   });
 
   afterEach(async () => {
@@ -90,42 +124,414 @@ describe('GET /products/:id', () => {
   });
 
   it('returns the product for a valid ID', async () => {
-    const res = await request(app).get(`/products/${productId}`);
+    const res = await request(app)
+      .get(`/products/${productId}`)
+      .set('Authorization', `Bearer ${token}`);
+
     expect(res.statusCode).toBe(200);
-    expect(res.body.name).toBe('Test Speaker');
+    expect(res.body.id).toBe(productId);
+    expect(res.body.name).toBe('Test Product');
   });
 
   it('returns 404 for a non-existent ID', async () => {
-    const res = await request(app).get('/products/999999');
+    const res = await request(app)
+      .get('/products/999999')
+      .set('Authorization', `Bearer ${token}`);
+
     expect(res.statusCode).toBe(404);
   });
 });
 
 describe('GET /products/search', () => {
+  afterEach(async () => {
+    await pool.query('DELETE FROM products');
+
+    await esClient
+      .deleteByQuery({
+        index: 'products_test',
+        query: { match_all: {} },
+        refresh: true,
+      })
+      .catch(() => {});
+  });
+
+  it('finds a product by exact name match', async () => {
+    const product = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [
+        'Wireless Headphones',
+        'Noise cancelling headphones',
+        149.99,
+        20,
+      ]
+    );
+
+    const createdProduct = product.rows[0];
+
+    await esClient.index({
+      index: 'products_test',
+      id: String(createdProduct.id),
+      document: {
+        name: createdProduct.name,
+        description: createdProduct.description,
+        price: createdProduct.price,
+        stock: createdProduct.stock,
+      },
+      refresh: true,
+    });
+
+    const res = await request(app)
+      .get('/products/search')
+      .query({ q: 'Wireless Headphones' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.length).toBeGreaterThan(0);
+    expect(res.body[0].name).toBe('Wireless Headphones');
+  });
+
+  it('finds a product despite a typo', async () => {
+    const product = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [
+        'Wireless Headphones',
+        'Noise cancelling headphones',
+        149.99,
+        20,
+      ]
+    );
+
+    const createdProduct = product.rows[0];
+
+    await esClient.index({
+      index: 'products_test',
+      id: String(createdProduct.id),
+      document: {
+        name: createdProduct.name,
+        description: createdProduct.description,
+        price: createdProduct.price,
+        stock: createdProduct.stock,
+      },
+      refresh: true,
+    });
+
+    const res = await request(app)
+      .get('/products/search')
+      .query({ q: 'Wireles Headpones' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.length).toBeGreaterThan(0);
+    expect(res.body[0].name).toBe('Wireless Headphones');
+  });
+});
+
+describe('POST /products/decrement-stock', () => {
   const token = makeToken(1);
 
+  let productId;
+
   beforeEach(async () => {
-    await request(app)
-      .post('/products')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Wireless Headphones', description: 'Noise-cancelling audio', price: 149.99, stock: 5 });
+    const result = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [
+        'Stock Test Product',
+        'Product for stock testing',
+        100,
+        10,
+      ]
+    );
+
+    productId = result.rows[0].id;
   });
 
   afterEach(async () => {
     await pool.query('DELETE FROM products');
   });
 
-  it('finds a product by exact name match', async () => {
-    const res = await request(app).get('/products/search?q=headphones');
+  it('decrements product stock by the requested quantity', async () => {
+    const res = await request(app)
+      .post('/products/decrement-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId,
+            quantity: 3,
+          },
+        ],
+      });
+
     expect(res.statusCode).toBe(200);
-    expect(res.body.length).toBeGreaterThan(0);
-    expect(res.body[0].name).toBe('Wireless Headphones');
+    expect(res.body.updated).toHaveLength(1);
+    expect(res.body.updated[0].stock).toBe(7);
+
+    const dbResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(dbResult.rows[0].stock).toBe(7);
   });
 
-  it('finds a product despite a typo (fuzzy match)', async () => {
-    const res = await request(app).get('/products/search?q=headphons');
+  it('rejects the decrement when there is insufficient stock', async () => {
+    const res = await request(app)
+      .post('/products/decrement-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId,
+            quantity: 11,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(409);
+
+    const dbResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(dbResult.rows[0].stock).toBe(10);
+  });
+
+  it('rejects a negative quantity', async () => {
+    const res = await request(app)
+      .post('/products/decrement-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId,
+            quantity: -3,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(400);
+
+    const dbResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(dbResult.rows[0].stock).toBe(10);
+  });
+
+  it('rolls back all stock changes if any item has insufficient stock', async () => {
+    const productA = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [
+        'Product A',
+        'Test product A',
+        100,
+        10,
+      ]
+    );
+
+    const productB = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [
+        'Product B',
+        'Test product B',
+        200,
+        2,
+      ]
+    );
+
+    const productAId = productA.rows[0].id;
+    const productBId = productB.rows[0].id;
+
+    const res = await request(app)
+      .post('/products/decrement-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId: productAId,
+            quantity: 3,
+          },
+          {
+            productId: productBId,
+            quantity: 3,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(409);
+
+    const result = await pool.query(
+      `SELECT id, stock
+       FROM products
+       WHERE id IN ($1, $2)
+       ORDER BY id`,
+      [productAId, productBId]
+    );
+
+    expect(result.rows).toHaveLength(2);
+
+    expect(result.rows[0].stock).toBe(10);
+    expect(result.rows[1].stock).toBe(2);
+  });
+});
+
+describe('POST /products/restore-stock', () => {
+  const token = makeToken(1);
+
+  let productId;
+ it('rejects a negative quantity', async () => {
+  const res = await request(app)
+    .post('/products/restore-stock')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      items: [
+        {
+          productId,
+          quantity: -3,
+        },
+      ],
+    });
+
+  expect(res.statusCode).toBe(400);
+
+  const dbResult = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productId]
+  );
+
+  expect(dbResult.rows[0].stock).toBe(7);
+});
+
+  beforeEach(async () => {
+    const result = await pool.query(
+      `INSERT INTO products
+       (name, description, price, stock)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [
+        'Restore Test Product',
+        'Product for restore testing',
+        100,
+        7,
+      ]
+    );
+
+    productId = result.rows[0].id;
+  });
+
+  afterEach(async () => {
+    await pool.query('DELETE FROM products');
+  });
+  
+  it('rejects restoring stock for a product that does not exist', async () => {
+  const res = await request(app)
+    .post('/products/restore-stock')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      items: [
+        {
+          productId: 999999,
+          quantity: 3,
+        },
+      ],
+    });
+
+  expect(res.statusCode).toBe(404);
+});
+it('rolls back all restores if one product does not exist', async () => {
+  const productA = await request(app)
+    .post('/products')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      name: 'Restore Product A',
+      description: 'Atomic restore test A',
+      price: 100,
+      stock: 10,
+    });
+
+  const productB = await request(app)
+    .post('/products')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      name: 'Restore Product B',
+      description: 'Atomic restore test B',
+      price: 200,
+      stock: 5,
+    });
+
+  const productAId = productA.body.id;
+  const productBId = productB.body.id;
+
+  const res = await request(app)
+    .post('/products/restore-stock')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      items: [
+        {
+          productId: productAId,
+          quantity: 3,
+        },
+        {
+          productId: 999999,
+          quantity: 3,
+        },
+      ],
+    });
+
+  expect(res.statusCode).toBe(404);
+
+  const resultA = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productAId]
+  );
+
+  expect(resultA.rows[0].stock).toBe(10);
+
+  const resultB = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productBId]
+  );
+
+  expect(resultB.rows[0].stock).toBe(5);
+});
+  it('restores product stock by the requested quantity', async () => {
+    const res = await request(app)
+      .post('/products/restore-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId,
+            quantity: 3,
+          },
+        ],
+      });
+
     expect(res.statusCode).toBe(200);
-    expect(res.body.length).toBeGreaterThan(0);
+    expect(res.body.updated).toHaveLength(1);
+    expect(res.body.updated[0].stock).toBe(10);
+
+    const dbResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(dbResult.rows[0].stock).toBe(10);
   });
 });
 

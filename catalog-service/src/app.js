@@ -90,11 +90,182 @@ app.get('/products/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
-
         res.status(200).json(result.rows[0]);
   } catch (err) {
     logger.error('Product lookup failed', { error: err.message, productId: req.params.id });
     res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
+app.post('/products/decrement-stock', authenticateToken, async (req, res) => {
+  const { items } = req.body;
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'items array is required' });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const updatedProducts = [];
+
+    for (const item of items) {
+      if (!item.productId || !Number.isInteger(item.quantity) || item.quantity <= 0) {
+        await client.query('ROLLBACK');
+
+        return res.status(400).json({
+          error: 'productId and a positive integer quantity are required',
+        });
+      }
+
+      const result = await client.query(
+        `UPDATE products
+         SET stock = stock - $1
+         WHERE id = $2 AND stock >= $1
+         RETURNING *`,
+        [item.quantity, item.productId]
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+
+        logger.warn('Stock decrement failed: insufficient stock', {
+          productId: item.productId,
+          requestedQuantity: item.quantity,
+        });
+
+        return res.status(409).json({
+          error: `Insufficient stock for product ${item.productId}`,
+          productId: item.productId,
+        });
+      }
+
+      updatedProducts.push(result.rows[0]);
+    }
+
+    await client.query('COMMIT');
+
+    for (const product of updatedProducts) {
+      await esClient.index({
+        index: PRODUCTS_INDEX,
+        id: String(product.id),
+        document: {
+          name: product.name,
+          description: product.description,
+          price: product.price,
+          stock: product.stock,
+        },
+        refresh: true,
+      }).catch((esErr) => {
+        logger.error('Failed to sync stock update to Elasticsearch', {
+          error: esErr.message,
+          productId: product.id,
+        });
+      });
+    }
+
+    logger.info('Stock decremented for order', { items });
+
+    res.status(200).json({ updated: updatedProducts });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+
+    logger.error('Stock decrement failed', {
+      error: err.message,
+      items,
+    });
+
+    res.status(500).json({ error: 'Failed to decrement stock' });
+  } finally {
+    client.release();
+  }
+});
+app.post('/products/restore-stock', authenticateToken, async (req, res) => {
+  const { items } = req.body;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      error: 'items must be a non-empty array',
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const updatedProducts = [];
+
+    for (const item of items) {
+      // Validate productId and quantity
+      if (
+        !item.productId ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity <= 0
+      ) {
+        await client.query('ROLLBACK');
+
+        return res.status(400).json({
+          error: 'productId and a positive integer quantity are required',
+        });
+      }
+
+      // Restore stock
+      const result = await client.query(
+        `UPDATE products
+         SET stock = stock + $1
+         WHERE id = $2
+         RETURNING *`,
+        [item.quantity, item.productId]
+      );
+
+      // Product does not exist
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+
+        return res.status(404).json({
+          error: `Product ${item.productId} not found`,
+        });
+      }
+
+      updatedProducts.push(result.rows[0]);
+    }
+
+    await client.query('COMMIT');
+
+    // Sync updated products to Elasticsearch
+    for (const product of updatedProducts) {
+      await esClient.index({
+        index: PRODUCTS_INDEX,
+        id: product.id.toString(),
+        document: product,
+      });
+    }
+
+    logger.info({
+      message: 'Stock restored',
+      items,
+    });
+
+    return res.status(200).json({
+      message: 'Stock restored successfully',
+      updated: updatedProducts,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    logger.error({
+      message: 'Failed to restore stock',
+      error: error.message,
+    });
+
+    return res.status(500).json({
+      error: 'Failed to restore stock',
+    });
+  } finally {
+    client.release();
   }
 });
 module.exports = app;
