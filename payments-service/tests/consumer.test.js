@@ -51,10 +51,21 @@ describe('startConsumer', () => {
   });
 
   it('processes a valid message, publishes a result, and acks it', async () => {
+    jest.useRealTimers();
     await startConsumer();
 
     const consumeCallback = mockChannel.consume.mock.calls[0][1];
-    const fakeOrder = { id: 1, user_id: 5, total_amount: '50.00' };
+    const fakeOrder = {
+       id: 1,
+       user_id: 5,
+       total_amount: '50.00',
+      items: [
+        {
+           productId: 1,
+           quantity: 1,
+        },
+      ],
+    };
     const fakeMsg = { content: Buffer.from(JSON.stringify(fakeOrder)) };
 
     await consumeCallback(fakeMsg);
@@ -88,6 +99,7 @@ describe('startConsumer', () => {
   });
 
   it('schedules a reconnect attempt when the connection closes', async () => {
+    jest.useFakeTimers();
     await startConsumer();
 
     const closeHandler = mockConnection.on.mock.calls.find(call => call[0] === 'close')[1];
@@ -118,7 +130,17 @@ describe('startConsumer', () => {
     await startConsumer();
 
     const consumeCallback = mockChannel.consume.mock.calls[0][1];
-    const fakeOrder = { id: 500, user_id: 1, total_amount: '20.00' };
+    const fakeOrder = {
+       id: 500,
+       user_id: 1,
+       total_amount: '20.00',
+       items: [
+        {
+          productId: 1,
+          quantity: 1,
+        },
+      ],
+    };
     const fakeMsg = { content: Buffer.from(JSON.stringify(fakeOrder)) };
 
     await consumeCallback(fakeMsg);
