@@ -272,4 +272,236 @@ for (const product of updatedProducts) {
     client.release();
   }
 });
+app.post('/products/reserve-stock', authenticateInternalService, async (req, res) => {
+  const { orderId, items } = req.body;
+
+  if (!orderId || !Number.isInteger(orderId)) {
+    return res.status(400).json({
+      error: 'Valid orderId is required',
+    });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      error: 'Items are required',
+    });
+  }
+
+  for (const item of items) {
+    if (
+      !Number.isInteger(item.productId) ||
+      !Number.isInteger(item.quantity) ||
+      item.quantity <= 0
+    ) {
+      return res.status(400).json({
+        error: 'Each item must have a valid productId and positive quantity',
+      });
+    }
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const reservations = [];
+
+    for (const item of items) {
+      const stockResult = await client.query(
+        `UPDATE products
+         SET stock = stock - $1
+         WHERE id = $2
+           AND stock >= $1
+         RETURNING *`,
+        [item.quantity, item.productId]
+      );
+
+      if (stockResult.rows.length === 0) {
+        throw new Error(
+          `Insufficient stock for product ${item.productId}`
+        );
+      }
+
+      const reservationResult = await client.query(
+        `INSERT INTO inventory_reservations
+          (order_id, product_id, quantity, status)
+         VALUES ($1, $2, $3, 'reserved')
+         RETURNING *`,
+        [orderId, item.productId, item.quantity]
+      );
+
+      reservations.push(reservationResult.rows[0]);
+    }
+
+    await client.query('COMMIT');
+
+    return res.status(200).json({
+      message: 'Stock reserved successfully',
+      reservations,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    logger.error('Stock reservation failed', {
+      orderId,
+      error: error.message,
+    });
+
+    return res.status(409).json({
+      error: error.message,
+    });
+  } finally {
+    client.release();
+  }
+});
+app.post(
+  '/products/confirm-reservation',
+  authenticateInternalService,
+  async (req, res) => {
+    const { orderId } = req.body;
+
+    if (!orderId || !Number.isInteger(orderId)) {
+      return res.status(400).json({
+        error: 'Valid orderId is required',
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const result = await client.query(
+        `UPDATE inventory_reservations
+         SET status = 'confirmed'
+         WHERE order_id = $1
+           AND status = 'reserved'
+         RETURNING *`,
+        [orderId]
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+
+        return res.status(404).json({
+          error: 'No reserved inventory found for this order',
+        });
+      }
+
+      await client.query('COMMIT');
+
+      logger.info('Inventory reservation confirmed', {
+        orderId,
+        reservations: result.rows,
+      });
+
+      return res.status(200).json({
+        message: 'Inventory reservation confirmed',
+        reservations: result.rows,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+
+      logger.error('Failed to confirm inventory reservation', {
+        orderId,
+        error: error.message,
+      });
+
+      return res.status(500).json({
+        error: 'Failed to confirm inventory reservation',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+app.post(
+  '/products/release-reservation',
+  authenticateInternalService,
+  async (req, res) => {
+    const { orderId } = req.body;
+
+    if (!orderId || !Number.isInteger(orderId)) {
+      return res.status(400).json({
+        error: 'Valid orderId is required',
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      // Find all reservations that are still reserved
+      const reservationResult = await client.query(
+        `SELECT *
+         FROM inventory_reservations
+         WHERE order_id = $1
+           AND status = 'reserved'
+         FOR UPDATE`,
+        [orderId]
+      );
+
+      if (reservationResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+
+        return res.status(404).json({
+          error: 'No reserved inventory found for this order',
+        });
+      }
+
+      // Restore stock for every reserved item
+      for (const reservation of reservationResult.rows) {
+        const stockResult = await client.query(
+          `UPDATE products
+           SET stock = stock + $1
+           WHERE id = $2
+           RETURNING *`,
+          [reservation.quantity, reservation.product_id]
+        );
+
+        if (stockResult.rows.length === 0) {
+          throw new Error(
+            `Product ${reservation.product_id} not found`
+          );
+        }
+      }
+
+      // Mark reservations as released
+      const releasedResult = await client.query(
+        `UPDATE inventory_reservations
+         SET status = 'released'
+         WHERE order_id = $1
+           AND status = 'reserved'
+         RETURNING *`,
+        [orderId]
+      );
+
+      await client.query('COMMIT');
+
+      logger.info('Inventory reservation released', {
+        orderId,
+        reservations: releasedResult.rows,
+      });
+
+      return res.status(200).json({
+        message: 'Inventory reservation released',
+        reservations: releasedResult.rows,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+
+      logger.error('Failed to release inventory reservation', {
+        orderId,
+        error: error.message,
+      });
+
+      return res.status(500).json({
+        error: 'Failed to release inventory reservation',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
 module.exports = app;

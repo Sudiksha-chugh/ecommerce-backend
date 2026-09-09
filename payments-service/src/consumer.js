@@ -2,7 +2,12 @@ const amqp = require('amqplib');
 const { processPayment, processRefund } = require('./payment-logic');
 const pool = require('./db');
 const logger = require('./logger');
-const { decrementStock, restoreStock } = require('./catalogClient');
+const {
+  reserveStock,
+  confirmReservation,
+  releaseReservation,
+  restoreStock,
+} = require('./catalogClient');
 
 const RECONNECT_DELAY_MS = 3000;
 
@@ -77,27 +82,34 @@ async function startConsumer() {
           quantity: item.quantity,
         }));
 
-        // Decrement inventory
-        await decrementStock(stockItems);
+       // Reserve inventory
+await reserveStock(order.id, stockItems);
 
-        logger.info('Stock decremented successfully', {
-          orderId: order.id,
-          items: stockItems,
-        });
+logger.info('Stock reserved successfully', {
+  orderId: order.id,
+  items: stockItems,
+});
 
         // Process payment
         const paymentResult = processPayment(order);
 
-        // Restore inventory if payment failed
-        if (paymentResult.status === 'failed') {
-          await restoreStock(stockItems);
+        // Release inventory if payment failed
+if (paymentResult.status === 'failed') {
+  await releaseReservation(order.id);
 
-          logger.info('Stock restored after payment failure', {
-            orderId: order.id,
-            items: stockItems,
-          });
-        }
+  logger.info('Inventory reservation released after payment failure', {
+    orderId: order.id,
+    items: stockItems,
+  });
+}
+if (paymentResult.status === 'succeeded') {
+  await confirmReservation(order.id);
 
+  logger.info('Inventory reservation confirmed after payment success', {
+    orderId: order.id,
+    items: stockItems,
+  });
+}
         // Publish payment result
         channel.sendToQueue(
           outgoingQueue,

@@ -600,7 +600,7 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [x] Implement payment status reconciliation
 * [x] Add idempotency keys for order/payment processing
 * [x] Add inventory management
-* [ ] Add order cancellation
+* [x] Add order cancellation
 * [x] Add API Gateway rate limiting
 * [x]  Add centralized logging
 * [ ] Add distributed tracing

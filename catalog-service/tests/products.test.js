@@ -551,3 +551,248 @@ describe('POST /products/restore-stock', () => {
 afterAll(async () => {
   await pool.end();
 });
+describe('POST /products/reserve-stock', () => {
+  afterEach(async () => {
+    await pool.query('DELETE FROM inventory_reservations');
+    await pool.query('DELETE FROM products');
+  });
+
+  it('reserves stock and creates an inventory reservation', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Test Product', 10.00, 5]
+    );
+
+    const productId = product.rows[0].id;
+
+    const res = await request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 101,
+        items: [
+          {
+            productId,
+            quantity: 2,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(200);
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(stockResult.rows[0].stock).toBe(3);
+
+    const reservationResult = await pool.query(
+      `SELECT order_id, product_id, quantity, status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [101]
+    );
+
+    expect(reservationResult.rows).toHaveLength(1);
+    expect(reservationResult.rows[0]).toMatchObject({
+      order_id: 101,
+      product_id: productId,
+      quantity: 2,
+      status: 'reserved',
+    });
+  });
+  it('rolls back the reservation when there is insufficient stock', async () => {
+  const product = await pool.query(
+    `INSERT INTO products (name, price, stock)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    ['Limited Product', 10.00, 2]
+  );
+
+  const productId = product.rows[0].id;
+
+  const res = await request(app)
+    .post('/products/reserve-stock')
+    .set('x-internal-service-key', internalServiceKey)
+    .send({
+      orderId: 102,
+      items: [
+        {
+          productId,
+          quantity: 3,
+        },
+      ],
+    });
+
+  expect(res.statusCode).toBe(409);
+
+  const stockResult = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productId]
+  );
+
+  expect(stockResult.rows[0].stock).toBe(2);
+
+  const reservationResult = await pool.query(
+    `SELECT *
+     FROM inventory_reservations
+     WHERE order_id = $1`,
+    [102]
+  );
+
+  expect(reservationResult.rows).toHaveLength(0);
+});
+it('allows only one order to reserve the last available unit', async () => {
+  const product = await pool.query(
+    `INSERT INTO products (name, price, stock)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    ['Last Unit Product', 10.00, 1]
+  );
+
+  const productId = product.rows[0].id;
+
+  const [res1, res2] = await Promise.all([
+    request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 201,
+        items: [{ productId, quantity: 1 }],
+      }),
+
+    request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 202,
+        items: [{ productId, quantity: 1 }],
+      }),
+  ]);
+
+  const statuses = [res1.statusCode, res2.statusCode].sort();
+
+  expect(statuses).toEqual([200, 409]);
+
+  const stockResult = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productId]
+  );
+
+  expect(stockResult.rows[0].stock).toBe(0);
+
+  const reservations = await pool.query(
+    `SELECT order_id, quantity
+     FROM inventory_reservations
+     WHERE product_id = $1`,
+    [productId]
+  );
+
+  expect(reservations.rows).toHaveLength(1);
+  expect(reservations.rows[0].quantity).toBe(1);
+});
+describe('POST /products/confirm-reservation', () => {
+  afterEach(async () => {
+    await pool.query('DELETE FROM inventory_reservations');
+    await pool.query('DELETE FROM products');
+  });
+
+  it('confirms a reserved inventory reservation', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Confirm Product', 10.00, 5]
+    );
+
+    const productId = product.rows[0].id;
+
+    await pool.query(
+      `INSERT INTO inventory_reservations
+        (order_id, product_id, quantity, status)
+       VALUES ($1, $2, $3, 'reserved')`,
+      [301, productId, 2]
+    );
+
+    const res = await request(app)
+      .post('/products/confirm-reservation')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 301,
+      });
+
+    expect(res.statusCode).toBe(200);
+
+    const reservation = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [301]
+    );
+
+    expect(reservation.rows).toHaveLength(1);
+    expect(reservation.rows[0].status).toBe('confirmed');
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    // Confirming does NOT add stock back.
+    expect(stockResult.rows[0].stock).toBe(5);
+  });
+});
+describe('POST /products/release-reservation', () => {
+  afterEach(async () => {
+    await pool.query('DELETE FROM inventory_reservations');
+    await pool.query('DELETE FROM products');
+  });
+
+  it('releases a reserved inventory reservation and restores stock', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Release Product', 10.00, 3]
+    );
+
+    const productId = product.rows[0].id;
+
+    await pool.query(
+      `INSERT INTO inventory_reservations
+        (order_id, product_id, quantity, status)
+       VALUES ($1, $2, $3, 'reserved')`,
+      [401, productId, 2]
+    );
+
+    const res = await request(app)
+      .post('/products/release-reservation')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 401,
+      });
+
+    expect(res.statusCode).toBe(200);
+
+    const reservation = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [401]
+    );
+
+    expect(reservation.rows).toHaveLength(1);
+    expect(reservation.rows[0].status).toBe('released');
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(stockResult.rows[0].stock).toBe(5);
+  });
+});
+});

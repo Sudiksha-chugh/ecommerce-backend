@@ -1,18 +1,44 @@
 jest.mock('amqplib');
 
+jest.mock('../src/payment-logic', () => ({
+  processPayment: jest.fn().mockReturnValue({
+    orderId: 1,
+    userId: 5,
+    amount: '50.00',
+    status: 'succeeded',
+  }),
+  processRefund: jest.fn().mockReturnValue({
+    orderId: 10,
+    status: 'refunded',
+  }),
+}));
+
 jest.mock('../src/catalogClient', () => ({
+  reserveStock: jest.fn().mockResolvedValue({}),
+  confirmReservation: jest.fn().mockResolvedValue({}),
+  releaseReservation: jest.fn().mockResolvedValue({}),
   decrementStock: jest.fn().mockResolvedValue({}),
   restoreStock: jest.fn().mockResolvedValue({}),
 }));
-const { restoreStock } = require('../src/catalogClient');
+
+const {
+  reserveStock,
+  confirmReservation,
+  releaseReservation,
+  restoreStock,
+} = require('../src/catalogClient');
+
+const {
+  processPayment,
+  processRefund,
+} = require('../src/payment-logic');
+
 jest.useFakeTimers();
 const amqp = require('amqplib');
 const { startConsumer } = require('../src/consumer');
-
 describe('startConsumer', () => {
   let mockChannel;
   let mockConnection;
-      const { restoreStock } = require('../src/catalogClient');
     beforeEach(() => {
     mockChannel = {
       assertQueue: jest.fn().mockResolvedValue(),
@@ -26,7 +52,12 @@ describe('startConsumer', () => {
       on: jest.fn(),
     };
     amqp.connect = jest.fn().mockResolvedValue(mockConnection);
+      reserveStock.mockClear();
+      confirmReservation.mockClear();
+      releaseReservation.mockClear();
       restoreStock.mockClear();
+      processPayment.mockClear();
+      processRefund.mockClear();    
   });
 
   afterEach(() => {
@@ -82,6 +113,13 @@ describe('startConsumer', () => {
       { persistent: true }
     );
     expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+    expect(reserveStock).toHaveBeenCalledWith(
+  fakeOrder.id,
+  fakeOrder.items.map((item) => ({
+    productId: item.productId,
+    quantity: item.quantity,
+  }))
+);
   });
 
   it('routes a malformed message to the DLQ instead of discarding it, and still acks the original', async () => {
@@ -126,10 +164,6 @@ describe('startConsumer', () => {
 
   afterEach(async () => {
     await pool.query('DELETE FROM processed_orders');
-  });
-
-  afterAll(async () => {
-    await pool.end();
   });
 
   it('processes an order it has not seen before', async () => {
@@ -257,5 +291,97 @@ it('restores inventory when a refund succeeds', async () => {
   );
 
   expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+});
+it('confirms inventory reservation when payment succeeds', async () => {
+  jest.useRealTimers();
+
+  processPayment.mockReturnValueOnce({
+    orderId: 2,
+    userId: 5,
+    amount: '50.00',
+    status: 'succeeded',
+  });
+
+  await startConsumer();
+
+  const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+  const fakeOrder = {
+    id: 2,
+    user_id: 5,
+    total_amount: '50.00',
+    items: [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const fakeMsg = {
+    content: Buffer.from(JSON.stringify(fakeOrder)),
+  };
+
+  await consumeCallback(fakeMsg);
+
+  expect(reserveStock).toHaveBeenCalledWith(
+    fakeOrder.id,
+    [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ]
+  );
+
+  expect(confirmReservation).toHaveBeenCalledWith(fakeOrder.id);
+
+  expect(releaseReservation).not.toHaveBeenCalled();
+});
+it('releases inventory reservation when payment fails', async () => {
+  jest.useRealTimers();
+
+  processPayment.mockReturnValueOnce({
+    orderId: 3,
+    userId: 5,
+    amount: '50.00',
+    status: 'failed',
+  });
+
+  await startConsumer();
+
+  const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+  const fakeOrder = {
+    id: 3,
+    user_id: 5,
+    total_amount: '50.00',
+    items: [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const fakeMsg = {
+    content: Buffer.from(JSON.stringify(fakeOrder)),
+  };
+
+  await consumeCallback(fakeMsg);
+
+  expect(reserveStock).toHaveBeenCalledWith(
+    fakeOrder.id,
+    [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ]
+  );
+
+  expect(releaseReservation).toHaveBeenCalledWith(fakeOrder.id);
+
+  expect(confirmReservation).not.toHaveBeenCalled();
 });
 });
