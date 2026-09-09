@@ -597,9 +597,9 @@ Some transitive Jest dependencies may report vulnerability warnings; these are n
 * [x] Add Kubernetes deployment manifests
 * [x] Add end-to-end integration tests (Postman)
 * [x] Add role-based access control
-* [ ] Implement payment status reconciliation
+* [x] Implement payment status reconciliation
 * [x] Add idempotency keys for order/payment processing
-* [ ] Add inventory management
+* [x] Add inventory management
 * [ ] Add order cancellation
 * [x] Add API Gateway rate limiting
 * [x]  Add centralized logging

@@ -157,13 +157,28 @@ async function startConsumer() {
           orderId: refundRequest.orderId,
         });
 
-        const refundResult = processRefund(refundRequest);
+       const refundResult = processRefund(refundRequest);
 
-        channel.sendToQueue(
-          refundResultQueue,
-          Buffer.from(JSON.stringify(refundResult)),
-          { persistent: true }
-        );
+// Restore inventory only when the refund succeeds
+if (refundResult.status === 'refunded') {
+  const stockItems = refundRequest.items.map((item) => ({
+    productId: item.productId,
+    quantity: item.quantity,
+  }));
+
+  await restoreStock(stockItems);
+
+  logger.info('Stock restored after successful refund', {
+    orderId: refundResult.orderId,
+    items: stockItems,
+  });
+}
+
+channel.sendToQueue(
+  refundResultQueue,
+  Buffer.from(JSON.stringify(refundResult)),
+  { persistent: true }
+);
 
         logger.info('Refund processed', {
           orderId: refundResult.orderId,

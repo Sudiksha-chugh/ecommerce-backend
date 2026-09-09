@@ -4,6 +4,7 @@ jest.mock('../src/catalogClient', () => ({
   decrementStock: jest.fn().mockResolvedValue({}),
   restoreStock: jest.fn().mockResolvedValue({}),
 }));
+const { restoreStock } = require('../src/catalogClient');
 jest.useFakeTimers();
 const amqp = require('amqplib');
 const { startConsumer } = require('../src/consumer');
@@ -11,8 +12,8 @@ const { startConsumer } = require('../src/consumer');
 describe('startConsumer', () => {
   let mockChannel;
   let mockConnection;
-
-  beforeEach(() => {
+      const { restoreStock } = require('../src/catalogClient');
+    beforeEach(() => {
     mockChannel = {
       assertQueue: jest.fn().mockResolvedValue(),
       prefetch: jest.fn().mockResolvedValue(),
@@ -25,6 +26,7 @@ describe('startConsumer', () => {
       on: jest.fn(),
     };
     amqp.connect = jest.fn().mockResolvedValue(mockConnection);
+      restoreStock.mockClear();
   });
 
   afterEach(() => {
@@ -163,7 +165,17 @@ describe('startConsumer', () => {
     await startConsumer();
 
     const refundCallback = mockChannel.consume.mock.calls[1][1];
-    const fakeRefund = { orderId: 10, userId: 1, amount: '20.00' };
+    const fakeRefund = {
+         orderId: 10,
+         userId: 1,
+         amount: '20.00',
+         items: [
+          {
+             productId: 1,
+             quantity: 1,
+          },
+       ],
+     };
     const fakeMsg = { content: Buffer.from(JSON.stringify(fakeRefund)) };
 
     await refundCallback(fakeMsg);
@@ -207,5 +219,43 @@ describe('startConsumer', () => {
     );
     expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
   });
+});
+it('restores inventory when a refund succeeds', async () => {
+  await startConsumer();
+
+  const refundCallback = mockChannel.consume.mock.calls[1][1];
+
+  const fakeRefund = {
+    orderId: 10,
+    userId: 1,
+    amount: '20.00',
+    items: [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const fakeMsg = {
+    content: Buffer.from(JSON.stringify(fakeRefund)),
+  };
+
+  await refundCallback(fakeMsg);
+ expect(restoreStock).toHaveBeenCalledTimes(1);
+  expect(restoreStock).toHaveBeenCalledWith([
+    {
+      productId: 1,
+      quantity: 2,
+    },
+  ]);
+
+  expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+    'refund_processed',
+    expect.any(Buffer),
+    { persistent: true }
+  );
+
+  expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
 });
 });

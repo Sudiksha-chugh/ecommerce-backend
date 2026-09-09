@@ -165,6 +165,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
             orderId: order.id,
             userId: order.user_id,
             amount: order.total_amount,
+            items: order.items,
           }),
         ]
       );
