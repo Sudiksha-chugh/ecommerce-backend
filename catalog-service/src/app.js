@@ -323,12 +323,17 @@ app.post('/products/reserve-stock', authenticateInternalService, async (req, res
       }
 
       const reservationResult = await client.query(
-        `INSERT INTO inventory_reservations
-          (order_id, product_id, quantity, status)
-         VALUES ($1, $2, $3, 'reserved')
-         RETURNING *`,
-        [orderId, item.productId, item.quantity]
-      );
+  `INSERT INTO inventory_reservations
+    (order_id, product_id, quantity, status, expires_at)
+   VALUES ($1, $2, $3, 'reserved', NOW() + ($4 * INTERVAL '1 minute'))
+   RETURNING *`,
+  [
+    orderId,
+    item.productId,
+    item.quantity,
+    Number(process.env.RESERVATION_EXPIRATION_MINUTES) || 15,
+  ]
+);
 
       reservations.push(reservationResult.rows[0]);
     }

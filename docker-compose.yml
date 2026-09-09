@@ -72,6 +72,8 @@ services:
       ES_NODE: http://elasticsearch:9200
       JWT_SECRET: super-secret-dev-key-change-in-prod
       PORT: 4001
+      RESERVATION_EXPIRATION_MINUTES: 15
+      INVENTORY_EXPIRATION_INTERVAL_MS: 60000
     depends_on:
       - catalog-db
       - elasticsearch
