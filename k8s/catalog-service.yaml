@@ -39,6 +39,10 @@ spec:
               value: http://elasticsearch:9200
             - name: PORT
               value: "4001"
+            - name: RESERVATION_EXPIRATION_MINUTES
+              value: "15"
+            - name: INVENTORY_EXPIRATION_INTERVAL_MS
+              value: "60000"
           ports:
             - containerPort: 4001
           readinessProbe:

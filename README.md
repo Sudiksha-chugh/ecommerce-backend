@@ -383,7 +383,26 @@ Kubernetes PersistentVolumeClaims start empty — tables must be created once pe
 ```bash
 kubectl exec -it deployment/auth-db -- psql -U auth_user -d auth_db -c "CREATE TABLE users (id SERIAL PRIMARY KEY, email VARCHAR(255) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT NOW());"
 
-kubectl exec -it deployment/catalog-db -- psql -U catalog_user -d catalog_db -c "CREATE TABLE products (id SERIAL PRIMARY KEY, name VARCHAR(255) NOT NULL, description TEXT, price NUMERIC(10,2) NOT NULL, stock INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT NOW());"
+kubectl exec -it deployment/catalog-db -- psql -U catalog_user -d catalog_db -c "
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  price NUMERIC(10,2) NOT NULL,
+  stock INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE inventory_reservations (
+  id SERIAL PRIMARY KEY,
+  order_id INTEGER NOT NULL,
+  product_id INTEGER NOT NULL,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  status VARCHAR(20) NOT NULL DEFAULT 'reserved',
+  created_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP,
+  CONSTRAINT unique_order_product UNIQUE (order_id, product_id)
+);"
 
 kubectl exec -it deployment/orders-db -- psql -U postgres -d orders_db -c "CREATE TABLE orders (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, items JSONB NOT NULL, total_amount NUMERIC(10,2) NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'pending', created_at TIMESTAMP DEFAULT NOW());"
 
