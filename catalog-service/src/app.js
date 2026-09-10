@@ -383,6 +383,41 @@ if (existingReservations.rows.length > 0) {
   } catch (error) {
     await client.query('ROLLBACK');
 
+    // Another identical request may have created the reservation
+    // while this transaction was running.
+    if (error.code === '23505') {
+      const existingReservations = await pool.query(
+        `SELECT *
+         FROM inventory_reservations
+         WHERE order_id = $1`,
+        [orderId]
+      );
+
+      const matchesExistingRequest =
+        existingReservations.rows.length === items.length &&
+        items.every((item) => {
+          const reservation = existingReservations.rows.find(
+            (r) => r.product_id === item.productId
+          );
+
+          return (
+            reservation &&
+            reservation.quantity === item.quantity
+          );
+        });
+
+      if (matchesExistingRequest) {
+        return res.status(200).json({
+          message: 'Stock reservation already exists',
+          reservations: existingReservations.rows,
+        });
+      }
+
+      return res.status(409).json({
+        error: 'Order already has a different inventory reservation',
+      });
+    }
+
     logger.error('Stock reservation failed', {
       orderId,
       error: error.message,
