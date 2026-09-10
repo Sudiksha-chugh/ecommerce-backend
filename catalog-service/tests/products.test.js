@@ -759,6 +759,64 @@ it('is idempotent when duplicate reservation requests arrive concurrently', asyn
 
   expect(reservationResult.rows).toHaveLength(0);
 });
+it('rolls back all reservations if any item has insufficient stock', async () => {
+  const productA = await pool.query(
+    `INSERT INTO products (name, price, stock)
+     VALUES ($1, $2, $3)
+     RETURNING id`,
+    ['Reservation Product A', 100, 10]
+  );
+
+  const productB = await pool.query(
+    `INSERT INTO products (name, price, stock)
+     VALUES ($1, $2, $3)
+     RETURNING id`,
+    ['Reservation Product B', 200, 2]
+  );
+
+  const productAId = productA.rows[0].id;
+  const productBId = productB.rows[0].id;
+
+  const res = await request(app)
+    .post('/products/reserve-stock')
+    .set('x-internal-service-key', internalServiceKey)
+    .send({
+      orderId: 105,
+      items: [
+        {
+          productId: productAId,
+          quantity: 3,
+        },
+        {
+          productId: productBId,
+          quantity: 3,
+        },
+      ],
+    });
+
+  expect(res.statusCode).toBe(409);
+
+  const products = await pool.query(
+    `SELECT id, stock
+     FROM products
+     WHERE id IN ($1, $2)
+     ORDER BY id`,
+    [productAId, productBId]
+  );
+
+  expect(products.rows).toHaveLength(2);
+  expect(products.rows[0].stock).toBe(10);
+  expect(products.rows[1].stock).toBe(2);
+
+  const reservations = await pool.query(
+    `SELECT *
+     FROM inventory_reservations
+     WHERE order_id = $1`,
+    [105]
+  );
+
+  expect(reservations.rows).toHaveLength(0);
+});
 it('allows only one order to reserve the last available unit', async () => {
   const product = await pool.query(
     `INSERT INTO products (name, price, stock)
