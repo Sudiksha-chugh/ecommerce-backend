@@ -604,6 +604,120 @@ describe('POST /products/reserve-stock', () => {
       status: 'reserved',
     });
   });
+  it('is idempotent when the same order reserves the same product twice', async () => {
+  const product = await pool.query(
+    `INSERT INTO products (name, price, stock)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    ['Idempotency Product', 10.00, 5]
+  );
+
+  const productId = product.rows[0].id;
+
+  const payload = {
+    orderId: 103,
+    items: [
+      {
+        productId,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const firstRes = await request(app)
+    .post('/products/reserve-stock')
+    .set('x-internal-service-key', internalServiceKey)
+    .send(payload);
+
+  const secondRes = await request(app)
+    .post('/products/reserve-stock')
+    .set('x-internal-service-key', internalServiceKey)
+    .send(payload);
+
+  expect(firstRes.statusCode).toBe(200);
+  expect(secondRes.statusCode).toBe(200);
+
+  const stockResult = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productId]
+  );
+
+  expect(stockResult.rows[0].stock).toBe(3);
+
+  const reservationResult = await pool.query(
+    `SELECT order_id, product_id, quantity, status
+     FROM inventory_reservations
+     WHERE order_id = $1`,
+    [103]
+  );
+
+  expect(reservationResult.rows).toHaveLength(1);
+  expect(reservationResult.rows[0]).toMatchObject({
+    order_id: 103,
+    product_id: productId,
+    quantity: 2,
+    status: 'reserved',
+  });
+});
+it('is idempotent when duplicate reservation requests arrive concurrently', async () => {
+  const product = await pool.query(
+    `INSERT INTO products (name, price, stock)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    ['Concurrent Idempotency Product', 10.00, 5]
+  );
+
+  const productId = product.rows[0].id;
+
+  const payload = {
+    orderId: 104,
+    items: [
+      {
+        productId,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const [firstRes, secondRes] = await Promise.all([
+    request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send(payload),
+
+    request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send(payload),
+  ]);
+
+  expect([firstRes.statusCode, secondRes.statusCode].sort()).toEqual([
+    200,
+    200,
+  ]);
+
+  const stockResult = await pool.query(
+    'SELECT stock FROM products WHERE id = $1',
+    [productId]
+  );
+
+  expect(stockResult.rows[0].stock).toBe(3);
+
+  const reservationResult = await pool.query(
+    `SELECT order_id, product_id, quantity, status
+     FROM inventory_reservations
+     WHERE order_id = $1`,
+    [104]
+  );
+
+  expect(reservationResult.rows).toHaveLength(1);
+  expect(reservationResult.rows[0]).toMatchObject({
+    order_id: 104,
+    product_id: productId,
+    quantity: 2,
+    status: 'reserved',
+  });
+});
   it('rolls back the reservation when there is insufficient stock', async () => {
   const product = await pool.query(
     `INSERT INTO products (name, price, stock)

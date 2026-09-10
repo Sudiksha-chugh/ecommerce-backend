@@ -304,6 +304,42 @@ app.post('/products/reserve-stock', authenticateInternalService, async (req, res
   try {
     await client.query('BEGIN');
 
+    const existingReservations = await client.query(
+  `SELECT *
+   FROM inventory_reservations
+   WHERE order_id = $1`,
+  [orderId]
+);
+
+if (existingReservations.rows.length > 0) {
+  const matchesExistingRequest =
+    existingReservations.rows.length === items.length &&
+    items.every((item) => {
+      const reservation = existingReservations.rows.find(
+        (r) => r.product_id === item.productId
+      );
+
+      return (
+        reservation &&
+        reservation.quantity === item.quantity
+      );
+    });
+
+  if (!matchesExistingRequest) {
+    await client.query('ROLLBACK');
+
+    return res.status(409).json({
+      error: 'Order already has a different inventory reservation',
+    });
+  }
+
+  await client.query('COMMIT');
+
+  return res.status(200).json({
+    message: 'Stock reservation already exists',
+    reservations: existingReservations.rows,
+  });
+}
     const reservations = [];
 
     for (const item of items) {
