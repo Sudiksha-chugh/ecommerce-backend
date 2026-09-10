@@ -26,7 +26,7 @@ spec:
       containers:
         - name: catalog-service
           image: sudikshachugh/catalog-service:local
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           envFrom:
             - secretRef:
                 name: catalog-service-secret
