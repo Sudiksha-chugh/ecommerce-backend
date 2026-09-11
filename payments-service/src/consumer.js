@@ -103,12 +103,28 @@ if (paymentResult.status === 'failed') {
   });
 }
 if (paymentResult.status === 'succeeded') {
-  await confirmReservation(order.id);
+  try {
+    await confirmReservation(order.id);
 
-  logger.info('Inventory reservation confirmed after payment success', {
-    orderId: order.id,
-    items: stockItems,
-  });
+    logger.info('Inventory reservation confirmed after payment success', {
+      orderId: order.id,
+      items: stockItems,
+    });
+  } catch (err) {
+    if (err.status === 404) {
+      logger.error(
+        'Payment succeeded but inventory reservation is no longer active',
+        {
+          orderId: order.id,
+          items: stockItems,
+        }
+      );
+
+      paymentResult.status = 'inventory_failed';
+    } else {
+      throw err;
+    }
+  }
 }
         // Publish payment result
         channel.sendToQueue(
@@ -136,6 +152,7 @@ if (paymentResult.status === 'succeeded') {
       } catch (err) {
         logger.error('Failed to process order_placed message', {
           error: err.message,
+          status: err.status,
         });
 
         channel.sendToQueue(
@@ -172,7 +189,10 @@ if (paymentResult.status === 'succeeded') {
        const refundResult = processRefund(refundRequest);
 
 // Restore inventory only when the refund succeeds
-if (refundResult.status === 'refunded') {
+if (
+  refundResult.status === 'refunded' &&
+  refundRequest.restoreInventory !== false
+) {
   const stockItems = refundRequest.items.map((item) => ({
     productId: item.productId,
     quantity: item.quantity,

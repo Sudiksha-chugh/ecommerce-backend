@@ -14,9 +14,11 @@ async function updateStock(path, body) {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       data.error || `Catalog service returned ${response.status}`
     );
+    error.status = response.status;
+    throw error;
   }
 
   return data;

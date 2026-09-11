@@ -210,6 +210,29 @@ const res = await request(app)
     expect(outboxCheck.rows.length).toBe(1);
   });
 
+  it('initiates a compensation refund when cancelling an inventory_failed order', async () => {
+    const orderId = await createPendingOrder();
+    await pool.query(
+      `UPDATE orders SET status = 'inventory_failed' WHERE id = $1`,
+      [orderId]
+    );
+
+    const res = await request(app)
+      .patch(`/orders/${orderId}/cancel`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body.status).toBe('refund_pending');
+
+    const outboxCheck = await pool.query(
+      "SELECT payload FROM outbox_events WHERE event_type = 'refund_requested' AND payload->>'orderId' = $1",
+      [String(orderId)]
+    );
+
+    expect(outboxCheck.rows.length).toBe(1);
+    expect(outboxCheck.rows[0].payload.restoreInventory).toBe(false);
+  });
+
   it('rejects cancelling an order that is already refund_pending with 409', async () => {
     const orderId = await createPendingOrder();
     await pool.query(`UPDATE orders SET status = 'refund_pending' WHERE id = $1`, [orderId]);

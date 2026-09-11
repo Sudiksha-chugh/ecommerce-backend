@@ -145,7 +145,10 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
     }
 
     // Payment already succeeded → refund required
-    if (order.status === 'succeeded') {
+    if (
+      order.status === 'succeeded' ||
+      order.status === 'inventory_failed'
+    ) {
       await client.query('BEGIN');
 
       const updateResult = await client.query(
@@ -166,6 +169,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
             userId: order.user_id,
             amount: order.total_amount,
             items: order.items,
+            restoreInventory: order.status !== 'inventory_failed',
           }),
         ]
       );

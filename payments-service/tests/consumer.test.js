@@ -338,6 +338,97 @@ it('confirms inventory reservation when payment succeeds', async () => {
 
   expect(releaseReservation).not.toHaveBeenCalled();
 });
+it('does not restore inventory when a compensation refund succeeds', async () => {
+  await startConsumer();
+
+  const refundCallback = mockChannel.consume.mock.calls[1][1];
+
+  const fakeRefund = {
+    orderId: 11,
+    userId: 1,
+    amount: '20.00',
+    restoreInventory: false,
+    items: [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const fakeMsg = {
+    content: Buffer.from(JSON.stringify(fakeRefund)),
+  };
+
+  await refundCallback(fakeMsg);
+
+  expect(restoreStock).not.toHaveBeenCalled();
+
+  expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+    'refund_processed',
+    expect.any(Buffer),
+    { persistent: true }
+  );
+
+  expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+});
+
+it('marks payment as inventory_failed when reservation confirmation returns 404', async () => {
+  jest.useRealTimers();
+
+  const error = new Error('Reservation expired');
+  error.status = 404;
+  confirmReservation.mockRejectedValueOnce(error);
+
+  processPayment.mockReturnValueOnce({
+    orderId: 6,
+    userId: 5,
+    amount: '50.00',
+    status: 'succeeded',
+  });
+
+  await startConsumer();
+
+  const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+  const fakeOrder = {
+    id: 6,
+    user_id: 5,
+    total_amount: '50.00',
+    items: [
+      {
+        productId: 1,
+        quantity: 2,
+      },
+    ],
+  };
+
+  const fakeMsg = {
+    content: Buffer.from(JSON.stringify(fakeOrder)),
+  };
+
+  await consumeCallback(fakeMsg);
+
+  expect(confirmReservation).toHaveBeenCalledWith(fakeOrder.id);
+
+  expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+    'payment_processed',
+    expect.any(Buffer),
+    { persistent: true }
+  );
+
+  const paymentCall = mockChannel.sendToQueue.mock.calls.find(
+    (call) => call[0] === 'payment_processed'
+  );
+
+  const paymentResult = JSON.parse(paymentCall[1].toString());
+
+  expect(paymentResult.status).toBe('inventory_failed');
+
+  expect(restoreStock).not.toHaveBeenCalled();
+  expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+});
+
 it('releases inventory reservation when payment fails', async () => {
   jest.useRealTimers();
 

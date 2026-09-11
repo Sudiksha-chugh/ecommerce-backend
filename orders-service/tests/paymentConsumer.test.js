@@ -101,4 +101,30 @@ describe('startPaymentConsumer', () => {
 
     jest.useRealTimers();
   });
+  it('updates the order status to inventory_failed when inventory confirmation fails', async () => {
+  await startPaymentConsumer();
+
+  const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+  const result = {
+    orderId: testOrderId,
+    userId: 1,
+    amount: '10.00',
+    status: 'inventory_failed',
+  };
+
+  const msg = {
+    content: Buffer.from(JSON.stringify(result)),
+  };
+
+  await consumeCallback(msg);
+
+  const check = await pool.query(
+    'SELECT status FROM orders WHERE id = $1',
+    [testOrderId]
+  );
+
+  expect(check.rows[0].status).toBe('inventory_failed');
+  expect(mockChannel.ack).toHaveBeenCalledWith(msg);
+});
 });
