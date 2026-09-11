@@ -4,10 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "test": "jest --verbose --runInBand"
-  },
+  "start": "node src/index.js",
+  "dev": "nodemon src/index.js",
+  "test": "jest --verbose --runInBand",
+  "migrate": "node src/migrate.js"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",

@@ -18,14 +18,14 @@ jest.mock('../src/catalogClient', () => ({
   confirmReservation: jest.fn().mockResolvedValue({}),
   releaseReservation: jest.fn().mockResolvedValue({}),
   decrementStock: jest.fn().mockResolvedValue({}),
-  restoreStock: jest.fn().mockResolvedValue({}),
+  refundReservation: jest.fn().mockResolvedValue({}),
 }));
 
 const {
   reserveStock,
   confirmReservation,
   releaseReservation,
-  restoreStock,
+  refundReservation,
 } = require('../src/catalogClient');
 
 const {
@@ -55,7 +55,7 @@ describe('startConsumer', () => {
       reserveStock.mockClear();
       confirmReservation.mockClear();
       releaseReservation.mockClear();
-      restoreStock.mockClear();
+      refundReservation.mockClear();
       processPayment.mockClear();
       processRefund.mockClear();    
   });
@@ -276,14 +276,8 @@ it('restores inventory when a refund succeeds', async () => {
   };
 
   await refundCallback(fakeMsg);
- expect(restoreStock).toHaveBeenCalledTimes(1);
-  expect(restoreStock).toHaveBeenCalledWith([
-    {
-      productId: 1,
-      quantity: 2,
-    },
-  ]);
-
+  expect(refundReservation).toHaveBeenCalledTimes(1);
+  expect(refundReservation).toHaveBeenCalledWith(fakeRefund.orderId);
   expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
     'refund_processed',
     expect.any(Buffer),
@@ -362,7 +356,7 @@ it('does not restore inventory when a compensation refund succeeds', async () =>
 
   await refundCallback(fakeMsg);
 
-  expect(restoreStock).not.toHaveBeenCalled();
+  expect(refundReservation).not.toHaveBeenCalled();
 
   expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
     'refund_processed',
@@ -425,7 +419,7 @@ it('marks payment as inventory_failed when reservation confirmation returns 404'
 
   expect(paymentResult.status).toBe('inventory_failed');
 
-  expect(restoreStock).not.toHaveBeenCalled();
+  expect(refundReservation).not.toHaveBeenCalled();
   expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
 });
 

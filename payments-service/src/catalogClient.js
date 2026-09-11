@@ -43,7 +43,13 @@ async function releaseReservation(orderId) {
   });
 }
 
-// Keep these for now because consumer.js still uses them.
+async function refundReservation(orderId) {
+  return updateStock('/products/refund-reservation', {
+    orderId,
+  });
+}
+
+// Legacy stock endpoints kept for compatibility.
 async function decrementStock(items) {
   return updateStock('/products/decrement-stock', { items });
 }
@@ -56,6 +62,7 @@ module.exports = {
   reserveStock,
   confirmReservation,
   releaseReservation,
+  refundReservation,
   decrementStock,
   restoreStock,
 };

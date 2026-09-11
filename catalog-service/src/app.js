@@ -276,16 +276,24 @@ app.post('/products/reserve-stock', authenticateInternalService, async (req, res
   const { orderId, items } = req.body;
 
   if (!orderId || !Number.isInteger(orderId)) {
-    return res.status(400).json({
-      error: 'Valid orderId is required',
-    });
-  }
+  return res.status(400).json({
+    error: 'Valid orderId is required',
+  });
+}
 
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({
-      error: 'Items are required',
-    });
-  }
+if (!Array.isArray(items) || items.length === 0) {
+  return res.status(400).json({
+    error: 'Items are required',
+  });
+}
+
+const productIds = items.map((item) => item.productId);
+
+if (new Set(productIds).size !== productIds.length) {
+  return res.status(400).json({
+    error: 'Duplicate product IDs are not allowed',
+  });
+}
 
   for (const item of items) {
     if (
@@ -340,9 +348,13 @@ if (existingReservations.rows.length > 0) {
     reservations: existingReservations.rows,
   });
 }
+   const sortedItems = [...items].sort(
+  (a, b) => a.productId - b.productId
+  );
+
     const reservations = [];
 
-    for (const item of items) {
+    for (const item of sortedItems) {
       const stockResult = await client.query(
         `UPDATE products
          SET stock = stock - $1
@@ -574,6 +586,129 @@ app.post(
 
       return res.status(500).json({
         error: 'Failed to release inventory reservation',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+app.post(
+  '/products/refund-reservation',
+  authenticateInternalService,
+  async (req, res) => {
+    const { orderId } = req.body;
+
+      if (!orderId || !Number.isInteger(orderId)) {
+         return res.status(400).json({
+          error: 'Valid orderId is required',
+        });
+      }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const reservationResult = await client.query(
+        `SELECT *
+         FROM inventory_reservations
+         WHERE order_id = $1
+         FOR UPDATE`,
+        [orderId]
+      );
+
+      if (reservationResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+
+        return res.status(404).json({
+          error: 'No inventory reservation found for this order',
+        });
+      }
+
+      const reservations = reservationResult.rows;
+
+      const confirmedReservations = reservations.filter(
+        (reservation) => reservation.status === 'confirmed'
+      );
+
+      if (confirmedReservations.length === 0) {
+        const alreadyRefunded = reservations.every(
+          (reservation) => reservation.status === 'refunded'
+        );
+
+        await client.query('ROLLBACK');
+
+        if (alreadyRefunded) {
+          return res.status(200).json({
+            message: 'Inventory already refunded',
+            reservations,
+          });
+        }
+
+        return res.status(409).json({
+          error: 'Inventory reservation is not eligible for refund',
+        });
+      }
+
+      if (confirmedReservations.length !== reservations.length) {
+        await client.query('ROLLBACK');
+
+        return res.status(409).json({
+          error: 'Order has reservations in an inconsistent state',
+        });
+      }
+
+      const updatedProducts = [];
+
+      for (const reservation of confirmedReservations) {
+        const stockResult = await client.query(
+          `UPDATE products
+           SET stock = stock + $1
+           WHERE id = $2
+           RETURNING *`,
+          [reservation.quantity, reservation.product_id]
+        );
+
+        if (stockResult.rows.length === 0) {
+          throw new Error(
+            `Product ${reservation.product_id} not found`
+          );
+        }
+
+        updatedProducts.push(stockResult.rows[0]);
+      }
+
+      const refundedResult = await client.query(
+        `UPDATE inventory_reservations
+         SET status = 'refunded'
+         WHERE order_id = $1
+           AND status = 'confirmed'
+         RETURNING *`,
+        [orderId]
+      );
+
+      await client.query('COMMIT');
+
+      logger.info('Inventory refunded', {
+        orderId,
+        reservations: refundedResult.rows,
+      });
+
+      return res.status(200).json({
+        message: 'Inventory refunded successfully',
+        reservations: refundedResult.rows,
+        updated: updatedProducts,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+
+      logger.error('Failed to refund inventory', {
+        orderId,
+        error: error.message,
+      });
+
+      return res.status(500).json({
+        error: 'Failed to refund inventory',
       });
     } finally {
       client.release();

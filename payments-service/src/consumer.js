@@ -6,7 +6,7 @@ const {
   reserveStock,
   confirmReservation,
   releaseReservation,
-  restoreStock,
+  refundReservation,
 } = require('./catalogClient');
 
 const RECONNECT_DELAY_MS = 3000;
@@ -186,31 +186,25 @@ if (paymentResult.status === 'succeeded') {
           orderId: refundRequest.orderId,
         });
 
-       const refundResult = processRefund(refundRequest);
+        const refundResult = processRefund(refundRequest);
 
-// Restore inventory only when the refund succeeds
-if (
-  refundResult.status === 'refunded' &&
-  refundRequest.restoreInventory !== false
-) {
-  const stockItems = refundRequest.items.map((item) => ({
-    productId: item.productId,
-    quantity: item.quantity,
-  }));
+        // Restore inventory only when the refund succeeds
+        if (
+          refundResult.status === 'refunded' &&
+          refundRequest.restoreInventory !== false
+        ) {
+          await refundReservation(refundRequest.orderId);
 
-  await restoreStock(stockItems);
+          logger.info('Inventory reservation refunded after successful refund', {
+            orderId: refundResult.orderId,
+          });
+        }
 
-  logger.info('Stock restored after successful refund', {
-    orderId: refundResult.orderId,
-    items: stockItems,
-  });
-}
-
-channel.sendToQueue(
-  refundResultQueue,
-  Buffer.from(JSON.stringify(refundResult)),
-  { persistent: true }
-);
+        channel.sendToQueue(
+          refundResultQueue,
+          Buffer.from(JSON.stringify(refundResult)),
+          { persistent: true }
+        );
 
         logger.info('Refund processed', {
           orderId: refundResult.orderId,
