@@ -24,9 +24,12 @@ describe('pollOnce', () => {
 
   it('publishes unpublished events and marks them published', async () => {
     const mockSendToQueue = jest.fn();
+    const mockWaitForConfirms = jest.fn().mockResolvedValue();
+
     getChannel.mockReturnValue({
       assertQueue: jest.fn().mockResolvedValue(),
       sendToQueue: mockSendToQueue,
+      waitForConfirms: mockWaitForConfirms,
     });
 
     const event = await insertOutboxEvent({ id: 1, user_id: 5, total_amount: '99.99' });
@@ -38,6 +41,7 @@ describe('pollOnce', () => {
       expect.any(Buffer),
       { persistent: true }
     );
+    expect(mockWaitForConfirms).toHaveBeenCalled();
 
     const check = await pool.query('SELECT * FROM outbox_events WHERE id = $1', [event.id]);
     expect(check.rows[0].published).toBe(true);
@@ -55,12 +59,39 @@ describe('pollOnce', () => {
     expect(check.rows[0].published).toBe(false);
   });
 
+  it('leaves an event unpublished if RabbitMQ does not confirm the message', async () => {
+  getChannel.mockReturnValue({
+    assertQueue: jest.fn().mockResolvedValue(),
+    sendToQueue: jest.fn(),
+    waitForConfirms: jest.fn().mockRejectedValue(
+      new Error('Publisher confirmation failed')
+    ),
+  });
+
+  const event = await insertOutboxEvent({
+    id: 4,
+    user_id: 8,
+    total_amount: '25.00',
+  });
+
+  await expect(pollOnce()).resolves.not.toThrow();
+
+  const check = await pool.query(
+    'SELECT * FROM outbox_events WHERE id = $1',
+    [event.id]
+  );
+
+  expect(check.rows[0].published).toBe(false);
+  expect(check.rows[0].published_at).toBeNull();
+});
+
   it('leaves an event unpublished if sendToQueue throws, without crashing the poller', async () => {
     getChannel.mockReturnValue({
       assertQueue: jest.fn().mockResolvedValue(),
       sendToQueue: jest.fn(() => {
         throw new Error('Simulated channel failure');
       }),
+      waitForConfirms: jest.fn().mockResolvedValue(),
     });
 
     const event = await insertOutboxEvent({ id: 3, user_id: 7, total_amount: '15.00' });

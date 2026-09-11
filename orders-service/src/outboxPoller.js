@@ -36,11 +36,12 @@ async function pollOnce() {
           { persistent: true }
         );
 
+        await channel.waitForConfirms();
+
         await client.query(
           `UPDATE outbox_events SET published = true, published_at = NOW() WHERE id = $1`,
           [event.id]
         );
-
         console.log(`Outbox poller: published event ${event.id} to "${event.event_type}"`);
       } catch (err) {
         console.error(`Outbox poller: failed to publish event ${event.id}, will retry next cycle:`, err.message);

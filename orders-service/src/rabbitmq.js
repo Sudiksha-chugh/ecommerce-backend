@@ -10,7 +10,7 @@ async function connectRabbitMQ() {
 
   connecting = (async () => {
     const connection = await amqp.connect(process.env.RABBITMQ_URL);
-    const ch = await connection.createChannel();
+    const ch = await connection.createConfirmChannel();
     await ch.assertQueue('order_placed', { durable: true });
 
     connection.on('error', (err) => {
