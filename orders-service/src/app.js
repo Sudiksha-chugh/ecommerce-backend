@@ -155,10 +155,23 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
         `UPDATE orders
          SET status = 'refund_pending'
          WHERE id = $1
+           AND status = $2
          RETURNING *`,
-        [orderId]
+        [orderId, order.status]
       );
 
+      if (updateResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+
+        logger.warn('Order cancellation lost race', {
+          orderId,
+          userId,
+        });
+
+        return res.status(409).json({
+          error: 'Order cannot be cancelled because its status has changed',
+        });
+      }
       await client.query(
         `INSERT INTO outbox_events (event_type, payload)
          VALUES ($1, $2)`,
