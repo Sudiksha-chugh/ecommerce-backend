@@ -61,15 +61,20 @@ async function startConsumer() {
           orderId: order.id,
         });
 
-        // Check whether this order was already processed
-        const existingOrder = await pool.query(
-          'SELECT order_id FROM processed_orders WHERE order_id = $1',
+        // Check whether a payment already exists for this order
+        const existingPayment = await pool.query(
+          `SELECT order_id, user_id, amount, status, transaction_id
+           FROM payments
+           WHERE order_id = $1`,
           [order.id]
         );
 
-        if (existingOrder.rows.length > 0) {
-          logger.info('Order already processed, skipping (idempotency check)', {
+        if (existingPayment.rows.length > 0) {
+          const payment = existingPayment.rows[0];
+
+          logger.info('Payment already exists, skipping payment processing', {
             orderId: order.id,
+            status: payment.status,
           });
 
           channel.ack(msg);
@@ -126,27 +131,70 @@ if (paymentResult.status === 'succeeded') {
     }
   }
 }
-        // Publish payment result
-        channel.sendToQueue(
-          outgoingQueue,
-          Buffer.from(JSON.stringify(paymentResult)),
-          { persistent: true }
-        );
+         // Save payment and outbox event atomically
+        const client = await pool.connect();
 
-        logger.info('Payment processed', {
-          orderId: order.id,
-          status: paymentResult.status,
-        });
+        try {
+          await client.query('BEGIN');
 
-        // Mark order as processed only after the workflow completes
-        await pool.query(
-          'INSERT INTO processed_orders (order_id) VALUES ($1)',
-          [order.id]
-        );
+          // Save payment result
+          await client.query(
+            `INSERT INTO payments (
+              order_id,
+              user_id,
+              amount,
+              status
+            )
+            VALUES ($1, $2, $3, $4)`,
+            [
+              paymentResult.orderId,
+              paymentResult.userId,
+              paymentResult.amount,
+              paymentResult.status,
+            ]
+          );
 
-        logger.info('Order marked as processed', {
-          orderId: order.id,
-        });
+          logger.info('Payment result saved', {
+            orderId: paymentResult.orderId,
+            status: paymentResult.status,
+          });
+
+          // Save event to outbox
+          await client.query(
+            `INSERT INTO outbox_events (
+              event_type,
+              payload
+            )
+            VALUES ($1, $2)`,
+            [
+              outgoingQueue,
+              JSON.stringify(paymentResult),
+            ]
+          );
+
+          logger.info('Payment result added to outbox', {
+            orderId: paymentResult.orderId,
+            eventType: outgoingQueue,
+          });
+
+          // Mark order as processed
+          await client.query(
+            'INSERT INTO processed_orders (order_id) VALUES ($1)',
+            [order.id]
+          );
+
+          await client.query('COMMIT');
+
+          logger.info('Payment workflow committed', {
+            orderId: order.id,
+            status: paymentResult.status,
+          });
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+        }
 
         channel.ack(msg);
       } catch (err) {

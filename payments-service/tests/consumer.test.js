@@ -36,6 +36,7 @@ const {
 jest.useFakeTimers();
 const amqp = require('amqplib');
 const { startConsumer } = require('../src/consumer');
+const pool = require('../src/db');
 describe('startConsumer', () => {
   let mockChannel;
   let mockConnection;
@@ -45,6 +46,7 @@ describe('startConsumer', () => {
       prefetch: jest.fn().mockResolvedValue(),
       consume: jest.fn(),
       sendToQueue: jest.fn(),
+      waitForConfirms: jest.fn().mockResolvedValue(),
       ack: jest.fn(),
     };
     mockConnection = {
@@ -107,11 +109,24 @@ describe('startConsumer', () => {
 
     await consumeCallback(fakeMsg);
 
-    expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-      'payment_processed',
-      expect.any(Buffer),
-      { persistent: true }
-    );
+const outbox = await pool.query(
+  `SELECT event_type, payload, published
+   FROM outbox_events
+   WHERE event_type = $1
+   ORDER BY id DESC
+   LIMIT 1`,
+  ['payment_processed']
+);
+
+expect(outbox.rows.length).toBe(1);
+expect(outbox.rows[0].event_type).toBe('payment_processed');
+expect(outbox.rows[0].published).toBe(false);
+
+const payload = outbox.rows[0].payload;
+
+expect(payload.orderId).toBe(fakeOrder.id);
+expect(payload.userId).toBe(fakeOrder.user_id);
+expect(payload.amount).toBe(fakeOrder.total_amount);
     expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
     expect(reserveStock).toHaveBeenCalledWith(
   fakeOrder.id,
@@ -162,8 +177,10 @@ describe('startConsumer', () => {
 
   const pool = require('../src/db');
 
-  afterEach(async () => {
+  beforeEach(async () => {
+    await pool.query('DELETE FROM payments');
     await pool.query('DELETE FROM processed_orders');
+    await pool.query('DELETE FROM outbox_events');
   });
 
   it('processes an order it has not seen before', async () => {
@@ -171,25 +188,46 @@ describe('startConsumer', () => {
 
     const consumeCallback = mockChannel.consume.mock.calls[0][1];
     const fakeOrder = {
-       id: 500,
-       user_id: 1,
-       total_amount: '20.00',
-       items: [
-        {
-          productId: 1,
-          quantity: 1,
-        },
-      ],
+      id: 500,
+      user_id: 1,
+      total_amount: '20.00',
+      items: [
+       {
+         productId: 1,
+         quantity: 1,
+       },
+     ],
     };
-    const fakeMsg = { content: Buffer.from(JSON.stringify(fakeOrder)) };
 
+     processPayment.mockReturnValueOnce({
+      orderId: fakeOrder.id,
+     userId: fakeOrder.user_id,
+     amount: fakeOrder.total_amount,
+     status: 'succeeded',
+    });
+
+     const fakeMsg = {
+     content: Buffer.from(JSON.stringify(fakeOrder)),
+    };
     await consumeCallback(fakeMsg);
 
-    expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-      'payment_processed',
-      expect.any(Buffer),
-      { persistent: true }
-    );
+const outbox = await pool.query(
+  `SELECT event_type, payload, published
+   FROM outbox_events
+   WHERE event_type = $1
+     AND payload->>'orderId' = $2
+   ORDER BY id DESC
+   LIMIT 1`,
+  ['payment_processed', '500']
+);
+
+expect(outbox.rows.length).toBe(1);
+expect(outbox.rows[0].event_type).toBe('payment_processed');
+expect(outbox.rows[0].published).toBe(false);
+
+expect(outbox.rows[0].payload.orderId).toBe(500);
+expect(outbox.rows[0].payload.userId).toBe(fakeOrder.user_id);
+expect(outbox.rows[0].payload.amount).toBe(fakeOrder.total_amount);
 
     const check = await pool.query('SELECT * FROM processed_orders WHERE order_id = $1', [500]);
     expect(check.rows.length).toBe(1);
@@ -405,19 +443,22 @@ it('marks payment as inventory_failed when reservation confirmation returns 404'
 
   expect(confirmReservation).toHaveBeenCalledWith(fakeOrder.id);
 
-  expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-    'payment_processed',
-    expect.any(Buffer),
-    { persistent: true }
-  );
+  const outbox = await pool.query(
+  `SELECT event_type, payload, published
+   FROM outbox_events
+   WHERE event_type = $1
+     AND payload->>'orderId' = $2
+   ORDER BY id DESC
+   LIMIT 1`,
+  ['payment_processed', String(fakeOrder.id)]
+);
 
-  const paymentCall = mockChannel.sendToQueue.mock.calls.find(
-    (call) => call[0] === 'payment_processed'
-  );
+expect(outbox.rows.length).toBe(1);
+expect(outbox.rows[0].event_type).toBe('payment_processed');
+expect(outbox.rows[0].published).toBe(false);
 
-  const paymentResult = JSON.parse(paymentCall[1].toString());
-
-  expect(paymentResult.status).toBe('inventory_failed');
+expect(outbox.rows[0].payload.orderId).toBe(fakeOrder.id);
+expect(outbox.rows[0].payload.status).toBe('inventory_failed');
 
   expect(refundReservation).not.toHaveBeenCalled();
   expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
