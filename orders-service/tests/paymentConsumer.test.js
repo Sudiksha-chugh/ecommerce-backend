@@ -127,4 +127,66 @@ describe('startPaymentConsumer', () => {
   expect(check.rows[0].status).toBe('inventory_failed');
   expect(mockChannel.ack).toHaveBeenCalledWith(msg);
 });
+  it('does not overwrite a cancelled order with a late payment event', async () => {
+  await pool.query(
+    `UPDATE orders SET status = 'cancelled' WHERE id = $1`,
+    [testOrderId]
+  );
+
+  await startPaymentConsumer();
+
+  const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+  const result = {
+    orderId: testOrderId,
+    userId: 1,
+    amount: '10.00',
+    status: 'succeeded',
+  };
+
+  const msg = {
+    content: Buffer.from(JSON.stringify(result)),
+  };
+
+  await consumeCallback(msg);
+
+  const check = await pool.query(
+    'SELECT status FROM orders WHERE id = $1',
+    [testOrderId]
+  );
+
+  expect(check.rows[0].status).toBe('cancelled');
+  expect(mockChannel.ack).toHaveBeenCalledWith(msg);
+});
+ it('does not apply a refund event to an order that is not refund_pending', async () => {
+  await pool.query(
+    `UPDATE orders SET status = 'succeeded' WHERE id = $1`,
+    [testOrderId]
+  );
+
+  await startPaymentConsumer();
+
+  const refundConsumeCallback = mockChannel.consume.mock.calls[1][1];
+
+  const result = {
+    orderId: testOrderId,
+    userId: 1,
+    amount: '10.00',
+    status: 'refunded',
+  };
+
+  const msg = {
+    content: Buffer.from(JSON.stringify(result)),
+  };
+
+  await refundConsumeCallback(msg);
+
+  const check = await pool.query(
+    'SELECT status FROM orders WHERE id = $1',
+    [testOrderId]
+  );
+
+  expect(check.rows[0].status).toBe('succeeded');
+  expect(mockChannel.ack).toHaveBeenCalledWith(msg);
+});
 });

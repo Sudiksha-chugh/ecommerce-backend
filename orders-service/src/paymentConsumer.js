@@ -43,7 +43,11 @@ async function startPaymentConsumer() {
         }
 
         const updateResult = await pool.query(
-          `UPDATE orders SET status = $1 WHERE id = $2 RETURNING id`,
+          `UPDATE orders 
+           SET status = $1 
+           WHERE id = $2
+             AND status = 'pending'
+           RETURNING id`,
           [status, orderId]
         );
 
@@ -83,7 +87,11 @@ async function startPaymentConsumer() {
         }
 
         const updateResult = await pool.query(
-          `UPDATE orders SET status = $1 WHERE id = $2 RETURNING id`,
+          `UPDATE orders
+           SET status = $1
+            WHERE id = $2
+             AND status = 'refund_pending'
+           RETURNING id`,
           [status, orderId]
         );
 
