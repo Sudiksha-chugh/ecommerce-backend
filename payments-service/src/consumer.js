@@ -87,51 +87,57 @@ async function startConsumer() {
           quantity: item.quantity,
         }));
 
-       // Reserve inventory
-await reserveStock(order.id, stockItems);
+        // Reserve inventory
+        await reserveStock(order.id, stockItems);
 
-logger.info('Stock reserved successfully', {
-  orderId: order.id,
-  items: stockItems,
-});
+        logger.info('Stock reserved successfully', {
+          orderId: order.id,
+          items: stockItems,
+        });
 
         // Process payment
         const paymentResult = processPayment(order);
 
         // Release inventory if payment failed
-if (paymentResult.status === 'failed') {
-  await releaseReservation(order.id);
+        if (paymentResult.status === 'failed') {
+          await releaseReservation(order.id);
 
-  logger.info('Inventory reservation released after payment failure', {
-    orderId: order.id,
-    items: stockItems,
-  });
-}
-if (paymentResult.status === 'succeeded') {
-  try {
-    await confirmReservation(order.id);
-
-    logger.info('Inventory reservation confirmed after payment success', {
-      orderId: order.id,
-      items: stockItems,
-    });
-  } catch (err) {
-    if (err.status === 404) {
-      logger.error(
-        'Payment succeeded but inventory reservation is no longer active',
-        {
-          orderId: order.id,
-          items: stockItems,
+          logger.info('Inventory reservation released after payment failure', {
+            orderId: order.id,
+            items: stockItems,
+          });
         }
-      );
 
-      paymentResult.status = 'inventory_failed';
-    } else {
-      throw err;
-    }
-  }
-}
-         // Save payment and outbox event atomically
+        // Confirm inventory if payment succeeded
+        if (paymentResult.status === 'succeeded') {
+          try {
+            await confirmReservation(order.id);
+
+            logger.info(
+              'Inventory reservation confirmed after payment success',
+              {
+                orderId: order.id,
+                items: stockItems,
+              }
+            );
+          } catch (err) {
+            if (err.status === 404) {
+              logger.error(
+                'Payment succeeded but inventory reservation is no longer active',
+                {
+                  orderId: order.id,
+                  items: stockItems,
+                }
+              );
+
+              paymentResult.status = 'inventory_failed';
+            } else {
+              throw err;
+            }
+          }
+        }
+
+        // Save payment and outbox event atomically
         const client = await pool.connect();
 
         try {
@@ -166,22 +172,13 @@ if (paymentResult.status === 'succeeded') {
               payload
             )
             VALUES ($1, $2)`,
-            [
-              outgoingQueue,
-              JSON.stringify(paymentResult),
-            ]
+            [outgoingQueue, JSON.stringify(paymentResult)]
           );
 
           logger.info('Payment result added to outbox', {
             orderId: paymentResult.orderId,
             eventType: outgoingQueue,
           });
-
-          // Mark order as processed
-          await client.query(
-            'INSERT INTO processed_orders (order_id) VALUES ($1)',
-            [order.id]
-          );
 
           await client.query('COMMIT');
 
@@ -234,6 +231,28 @@ if (paymentResult.status === 'succeeded') {
           orderId: refundRequest.orderId,
         });
 
+        // Check whether this refund was already processed
+        const existingRefund = await pool.query(
+          `SELECT order_id, user_id, amount, status
+           FROM refunds
+           WHERE order_id = $1`,
+          [refundRequest.orderId]
+        );
+
+        if (existingRefund.rows.length > 0) {
+          const refund = existingRefund.rows[0];
+
+          logger.info('Refund already exists, skipping refund processing', {
+            orderId: refund.order_id,
+            status: refund.status,
+          });
+
+          // The original outbox event is responsible for publishing
+          // the refund_processed result.
+          channel.ack(msg);
+          return;
+        }
+
         const refundResult = processRefund(refundRequest);
 
         // Restore inventory only when the refund succeeds
@@ -243,16 +262,53 @@ if (paymentResult.status === 'succeeded') {
         ) {
           await refundReservation(refundRequest.orderId);
 
-          logger.info('Inventory reservation refunded after successful refund', {
-            orderId: refundResult.orderId,
-          });
+          logger.info(
+            'Inventory reservation refunded after successful refund',
+            {
+              orderId: refundResult.orderId,
+            }
+          );
         }
 
-        channel.sendToQueue(
-          refundResultQueue,
-          Buffer.from(JSON.stringify(refundResult)),
-          { persistent: true }
-        );
+        const client = await pool.connect();
+
+        try {
+          await client.query('BEGIN');
+
+          // Record the refund
+          await client.query(
+            `INSERT INTO refunds (
+              order_id,
+              user_id,
+              amount,
+              status
+            )
+            VALUES ($1, $2, $3, $4)`,
+            [
+              refundRequest.orderId,
+              refundRequest.userId,
+              refundRequest.amount,
+              refundResult.status,
+            ]
+          );
+
+          // Store refund_processed in the outbox
+          await client.query(
+            `INSERT INTO outbox_events (
+              event_type,
+              payload
+            )
+            VALUES ($1, $2)`,
+            [refundResultQueue, JSON.stringify(refundResult)]
+          );
+
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+        }
 
         logger.info('Refund processed', {
           orderId: refundResult.orderId,
@@ -285,12 +341,11 @@ if (paymentResult.status === 'succeeded') {
       }
     });
   } catch (err) {
-    logger.error('Failed to connect to RabbitMQ, retrying', {
-      delayMs: RECONNECT_DELAY_MS,
+    logger.error('Failed to start payments consumer', {
       error: err.message,
     });
 
-    setTimeout(startConsumer, RECONNECT_DELAY_MS);
+    throw err;
   }
 }
 

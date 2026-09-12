@@ -333,11 +333,7 @@ jobs:
               created_at TIMESTAMP DEFAULT NOW(),
               updated_at TIMESTAMP DEFAULT NOW()
             );
-            CREATE TABLE processed_orders (
-              order_id INTEGER PRIMARY KEY,
-              processed_at TIMESTAMP DEFAULT NOW()
-            );
-
+            
              CREATE TABLE outbox_events (
               id SERIAL PRIMARY KEY,
               event_type VARCHAR(50) NOT NULL,
