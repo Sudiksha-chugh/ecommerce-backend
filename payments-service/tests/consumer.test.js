@@ -406,7 +406,45 @@ describe('startConsumer', () => {
       expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
     });
   });
+    it('skips processing (but still acks) a refund it has already seen', async () => {
+    await pool.query(
+      `INSERT INTO refunds (
+        order_id,
+        user_id,
+        amount,
+        status
+      )
+      VALUES ($1, $2, $3, $4)`,
+      [501, 1, '20.00', 'refunded']
+    );
 
+    await startConsumer();
+
+    const refundCallback = mockChannel.consume.mock.calls[1][1];
+
+    const fakeRefund = {
+      orderId: 501,
+      userId: 1,
+      amount: '20.00',
+      items: [
+        {
+          productId: 1,
+          quantity: 2,
+        },
+      ],
+    };
+
+    const fakeMsg = {
+      content: Buffer.from(JSON.stringify(fakeRefund)),
+    };
+
+    await refundCallback(fakeMsg);
+
+    expect(processRefund).not.toHaveBeenCalled();
+    expect(refundReservation).not.toHaveBeenCalled();
+
+    expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+  });
   it('restores inventory when a refund succeeds', async () => {
     await startConsumer();
 
