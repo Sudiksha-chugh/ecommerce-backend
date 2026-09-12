@@ -916,6 +916,53 @@ describe('POST /products/confirm-reservation', () => {
     // Confirming does NOT add stock back.
     expect(stockResult.rows[0].stock).toBe(5);
   });
+    it('is idempotent when the reservation is already confirmed', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Already Confirmed Product', 10.00, 5]
+    );
+
+    const productId = product.rows[0].id;
+
+    await pool.query(
+      `INSERT INTO inventory_reservations
+        (order_id, product_id, quantity, status)
+       VALUES ($1, $2, $3, 'confirmed')`,
+      [302, productId, 2]
+    );
+
+    const res = await request(app)
+      .post('/products/confirm-reservation')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 302,
+      });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe(
+      'Inventory reservation already confirmed'
+    );
+
+    const reservation = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [302]
+    );
+
+    expect(reservation.rows).toHaveLength(1);
+    expect(reservation.rows[0].status).toBe('confirmed');
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    // Confirming an already-confirmed reservation must not change stock.
+    expect(stockResult.rows[0].stock).toBe(5);
+  });
 });
 describe('POST /products/release-reservation', () => {
   afterEach(async () => {

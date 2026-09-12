@@ -468,24 +468,48 @@ app.post(
         [orderId]
       );
 
-      if (result.rows.length === 0) {
-        await client.query('ROLLBACK');
+      // Normal case: reservation was reserved and is now confirmed.
+      if (result.rows.length > 0) {
+        await client.query('COMMIT');
 
-        return res.status(404).json({
-          error: 'No reserved inventory found for this order',
+        logger.info('Inventory reservation confirmed', {
+          orderId,
+          reservations: result.rows,
+        });
+
+        return res.status(200).json({
+          message: 'Inventory reservation confirmed',
+          reservations: result.rows,
         });
       }
 
-      await client.query('COMMIT');
+      // Idempotent case: reservation was already confirmed.
+      const confirmedResult = await client.query(
+        `SELECT *
+         FROM inventory_reservations
+         WHERE order_id = $1
+           AND status = 'confirmed'`,
+        [orderId]
+      );
 
-      logger.info('Inventory reservation confirmed', {
-        orderId,
-        reservations: result.rows,
-      });
+      if (confirmedResult.rows.length > 0) {
+        await client.query('COMMIT');
 
-      return res.status(200).json({
-        message: 'Inventory reservation confirmed',
-        reservations: result.rows,
+        logger.info('Inventory reservation already confirmed', {
+          orderId,
+          reservations: confirmedResult.rows,
+        });
+
+        return res.status(200).json({
+          message: 'Inventory reservation already confirmed',
+          reservations: confirmedResult.rows,
+        });
+      }
+
+      await client.query('ROLLBACK');
+
+      return res.status(404).json({
+        error: 'No active inventory reservation found for this order',
       });
     } catch (error) {
       await client.query('ROLLBACK');
