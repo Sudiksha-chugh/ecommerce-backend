@@ -84,7 +84,7 @@ services:
       - "4001:4001"
     environment:
       DB_HOST: catalog-db
-      INTERNAL_SERVICE_KEY: 3cb3932caf29d55b87d0a6d95a10a9297e81630af641b9406cb3eccfbcbd1416
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       DB_PORT: 5432
       DB_USER: catalog_user
       DB_PASSWORD: catalog_pass
