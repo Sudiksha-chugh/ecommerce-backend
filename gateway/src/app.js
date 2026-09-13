@@ -35,6 +35,10 @@ function proxyOptions(target, prefix) {
     on: {
       proxyReq: (proxyReq, req) => {
         proxyReq.setHeader('X-Request-ID', req.requestId);
+
+        if (req.headers['idempotency-key']) {
+          proxyReq.setHeader('Idempotency-Key', req.headers['idempotency-key']);
+        }
       },
 
       error: (err, req, res) => {
