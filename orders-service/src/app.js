@@ -19,6 +19,7 @@ app.get('/health', (req, res) => {
 app.post('/orders', authenticateToken, async (req, res) => {
   const userId = req.user.userId;
   const { items, totalAmount } = req.body;
+  const idempotencyKey = req.headers['idempotency-key'] || null;
 
   if (!items || !totalAmount) {
     logger.warn('Order creation validation failed', {
@@ -39,14 +40,41 @@ app.post('/orders', authenticateToken, async (req, res) => {
 
     await client.query('BEGIN');
 
+    let newOrder;
+
     const orderResult = await client.query(
-      `INSERT INTO orders (user_id, items, total_amount)
-       VALUES ($1, $2, $3)
+      `INSERT INTO orders (user_id, items, total_amount, idempotency_key)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, idempotency_key)
+       WHERE idempotency_key IS NOT NULL
+       DO NOTHING
        RETURNING *`,
-      [userId, JSON.stringify(items), totalAmount]
+      [userId, JSON.stringify(items), totalAmount, idempotencyKey]
     );
 
-    const newOrder = orderResult.rows[0];
+    if (orderResult.rows.length > 0) {
+      newOrder = orderResult.rows[0];
+    } else {
+      const existingOrderResult = await client.query(
+        `SELECT * FROM orders
+         WHERE user_id = $1
+           AND idempotency_key = $2`,
+        [userId, idempotencyKey]
+      );
+
+      newOrder = existingOrderResult.rows[0];
+
+      await client.query('COMMIT');
+
+      logger.info('Returning existing order for idempotency key', {
+        orderId: newOrder.id,
+        userId,
+        idempotencyKey,
+        requestId: req.requestId,
+      });
+
+      return res.status(200).json(newOrder);
+    }
 
     const orderPlacedEvent = {
       ...newOrder,
@@ -65,6 +93,7 @@ app.post('/orders', authenticateToken, async (req, res) => {
       orderId: newOrder.id,
       userId,
       totalAmount: newOrder.total_amount,
+      idempotencyKey,
       requestId: req.requestId,
     });
 

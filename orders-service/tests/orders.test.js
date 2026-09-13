@@ -243,5 +243,138 @@ const res = await request(app)
 
     expect(res.statusCode).toBe(409);
   });
+  it('returns the existing order when the same user retries with the same idempotency key', async () => {
+    const firstRes = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', 'order-retry-123')
+      .send({
+        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        totalAmount: 104.97,
+      });
+
+    const secondRes = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', 'order-retry-123')
+      .send({
+        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        totalAmount: 104.97,
+      });
+
+    expect(firstRes.statusCode).toBe(201);
+    expect(secondRes.statusCode).toBe(200);
+    expect(secondRes.body.id).toBe(firstRes.body.id);
+  });
+
+  it('does not create a duplicate outbox event when the same idempotency key is retried', async () => {
+    const firstRes = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', 'order-retry-456')
+      .send({
+        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        totalAmount: 104.97,
+      });
+
+    const secondRes = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', 'order-retry-456')
+      .send({
+        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        totalAmount: 104.97,
+      });
+
+    expect(firstRes.body.id).toBe(secondRes.body.id);
+
+    const ordersCheck = await pool.query(
+      'SELECT * FROM orders WHERE user_id = $1 AND idempotency_key = $2',
+      [1, 'order-retry-456']
+    );
+
+    const outboxCheck = await pool.query(
+      "SELECT * FROM outbox_events WHERE event_type = 'order_placed' AND payload->>'id' = $1",
+      [String(firstRes.body.id)]
+    );
+
+    expect(ordersCheck.rows.length).toBe(1);
+    expect(outboxCheck.rows.length).toBe(1);
+  });
+
+  it('allows different users to use the same idempotency key', async () => {
+    const otherUserToken = makeToken(2);
+
+    const firstRes = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', 'shared-key-789')
+      .send({
+        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        totalAmount: 104.97,
+      });
+
+    const secondRes = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${otherUserToken}`)
+      .set('Idempotency-Key', 'shared-key-789')
+      .send({
+        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        totalAmount: 104.97,
+      });
+
+    expect(firstRes.statusCode).toBe(201);
+    expect(secondRes.statusCode).toBe(201);
+    expect(firstRes.body.id).not.toBe(secondRes.body.id);
+    expect(firstRes.body.user_id).toBe(1);
+    expect(secondRes.body.user_id).toBe(2);
+  });
+
+  it('handles concurrent requests with the same idempotency key', async () => {
+    const requests = [
+      request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', 'concurrent-key-123')
+        .send({
+          items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+          totalAmount: 104.97,
+        }),
+
+      request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', 'concurrent-key-123')
+        .send({
+          items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+          totalAmount: 104.97,
+        }),
+    ];
+
+    const [firstRes, secondRes] = await Promise.all(requests);
+
+    expect([firstRes.statusCode, secondRes.statusCode].sort()).toEqual([
+      200,
+      201,
+    ]);
+
+    expect(firstRes.body.id).toBe(secondRes.body.id);
+
+    const ordersCheck = await pool.query(
+      `SELECT * FROM orders
+       WHERE user_id = $1
+         AND idempotency_key = $2`,
+      [1, 'concurrent-key-123']
+    );
+
+    const outboxCheck = await pool.query(
+      `SELECT * FROM outbox_events
+       WHERE event_type = 'order_placed'
+         AND payload->>'id' = $1`,
+      [String(firstRes.body.id)]
+    );
+    expect(ordersCheck.rows.length).toBe(1);
+    expect(outboxCheck.rows.length).toBe(1);
+  });
 });
 });
