@@ -137,6 +137,7 @@ describe('startConsumer', () => {
       id: 1,
       user_id: 5,
       total_amount: '50.00',
+      requestId: 'test-request-123',
       items: [
         {
           productId: 1,
@@ -177,7 +178,8 @@ describe('startConsumer', () => {
       fakeOrder.items.map((item) => ({
         productId: item.productId,
         quantity: item.quantity,
-      }))
+      })),
+      fakeOrder.requestId
     );
   });
 
@@ -426,6 +428,7 @@ describe('startConsumer', () => {
       orderId: 501,
       userId: 1,
       amount: '20.00',
+      requestId: 'test-request-123',
       items: [
         {
           productId: 1,
@@ -454,6 +457,7 @@ describe('startConsumer', () => {
       orderId: 10,
       userId: 1,
       amount: '20.00',
+      requestId: 'test-request-123',
       items: [
         {
           productId: 1,
@@ -469,7 +473,10 @@ describe('startConsumer', () => {
     await refundCallback(fakeMsg);
 
     expect(refundReservation).toHaveBeenCalledTimes(1);
-    expect(refundReservation).toHaveBeenCalledWith(fakeRefund.orderId);
+    expect(refundReservation).toHaveBeenCalledWith(
+      fakeRefund.orderId,
+      fakeRefund.requestId
+    );
 
     const outbox = await pool.query(
       `SELECT event_type, payload, published
@@ -507,6 +514,7 @@ describe('startConsumer', () => {
       id: 2,
       user_id: 5,
       total_amount: '50.00',
+      requestId: 'test-request-123',
       items: [
         {
           productId: 1,
@@ -528,10 +536,14 @@ describe('startConsumer', () => {
           productId: 1,
           quantity: 2,
         },
-      ]
+      ],
+      fakeOrder.requestId
     );
 
-    expect(confirmReservation).toHaveBeenCalledWith(fakeOrder.id);
+    expect(confirmReservation).toHaveBeenCalledWith(
+      fakeOrder.id,
+      fakeOrder.requestId
+    );
 
     expect(releaseReservation).not.toHaveBeenCalled();
   });
@@ -650,6 +662,7 @@ describe('startConsumer', () => {
       id: 3,
       user_id: 5,
       total_amount: '50.00',
+      requestId: 'test-request-123',
       items: [
         {
           productId: 1,
@@ -664,7 +677,10 @@ describe('startConsumer', () => {
 
     await consumeCallback(fakeMsg);
 
-    expect(releaseReservation).toHaveBeenCalledWith(fakeOrder.id);
+    expect(releaseReservation).toHaveBeenCalledWith(
+      fakeOrder.id,
+      fakeOrder.requestId
+    );
 
     const result = await pool.query(
       `SELECT status

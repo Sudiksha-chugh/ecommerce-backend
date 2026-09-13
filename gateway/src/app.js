@@ -2,8 +2,10 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const rateLimit = require('express-rate-limit');
 const logger = require('./logger');
+const requestIdMiddleware = require('./requestId');
 require('dotenv').config();
 const app = express();
+app.use(requestIdMiddleware);
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -31,6 +33,10 @@ function proxyOptions(target, prefix) {
     changeOrigin: true,
     pathRewrite: prefix ? (path) => prefix + path : undefined,
     on: {
+      proxyReq: (proxyReq, req) => {
+        proxyReq.setHeader('X-Request-ID', req.requestId);
+      },
+
       error: (err, req, res) => {
         logger.error('Proxy error reaching upstream service', { target, error: err.message, path: req.originalUrl });
         if (!res.headersSent) {

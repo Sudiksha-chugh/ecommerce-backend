@@ -1,3 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,20 +27,55 @@ spec:
       containers:
         - name: elasticsearch
           image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+
           env:
             - name: discovery.type
               value: single-node
+
             - name: xpack.security.enabled
               value: "false"
+
             - name: ES_JAVA_OPTS
               value: "-Xms512m -Xmx512m"
+
           ports:
-            - containerPort: 9200
+            - name: http
+              containerPort: 9200
+
           resources:
-            limits:
-              memory: "1Gi"
             requests:
-              memory: "768Mi"
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+          volumeMounts:
+            - name: elasticsearch-data
+              mountPath: /usr/share/elasticsearch/data
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9200
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      volumes:
+        - name: elasticsearch-data
+          persistentVolumeClaim:
+            claimName: elasticsearch-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -38,5 +85,6 @@ spec:
   selector:
     app: elasticsearch
   ports:
-    - port: 9200
+    - name: http
+      port: 9200
       targetPort: 9200

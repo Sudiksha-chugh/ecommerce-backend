@@ -3,8 +3,10 @@ const pool = require('./db');
 const authenticateToken = require('./middleware/auth');
 const logger = require('./logger');
 require('dotenv').config();
+const requestIdMiddleware = require('./requestId');
 
 const app = express();
+app.use(requestIdMiddleware);
 
 app.use(express.json());
 
@@ -22,6 +24,7 @@ app.post('/orders', authenticateToken, async (req, res) => {
     logger.warn('Order creation validation failed', {
       userId,
       reason: 'items and totalAmount are required',
+      requestId: req.requestId,
     });
 
     return res.status(400).json({
@@ -45,10 +48,15 @@ app.post('/orders', authenticateToken, async (req, res) => {
 
     const newOrder = orderResult.rows[0];
 
+    const orderPlacedEvent = {
+      ...newOrder,
+      requestId: req.requestId,
+    };
+
     await client.query(
       `INSERT INTO outbox_events (event_type, payload)
        VALUES ($1, $2)`,
-      ['order_placed', JSON.stringify(newOrder)]
+      ['order_placed', JSON.stringify(orderPlacedEvent)]
     );
 
     await client.query('COMMIT');
@@ -57,6 +65,7 @@ app.post('/orders', authenticateToken, async (req, res) => {
       orderId: newOrder.id,
       userId,
       totalAmount: newOrder.total_amount,
+      requestId: req.requestId,
     });
 
     return res.status(201).json(newOrder);
@@ -66,6 +75,7 @@ app.post('/orders', authenticateToken, async (req, res) => {
         logger.error('Order transaction rollback failed', {
           error: rollbackErr.message,
           userId,
+          requestId: req.requestId,
         });
       });
     }
@@ -74,6 +84,7 @@ app.post('/orders', authenticateToken, async (req, res) => {
       error: err.message,
       stack: err.stack,
       userId,
+      requestId: req.requestId,
     });
 
     return res.status(500).json({
@@ -105,6 +116,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
       logger.warn('Order cancellation failed: order not found', {
         orderId,
         userId,
+        requestId: req.requestId,
       });
 
       return res.status(404).json({
@@ -119,6 +131,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
         orderId,
         userId,
         orderOwnerId: order.user_id,
+        requestId: req.requestId,
       });
 
       return res.status(403).json({
@@ -139,6 +152,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
       logger.info('Pending order cancelled successfully', {
         orderId,
         userId,
+        requestId: req.requestId,
       });
 
       return res.status(200).json(updateResult.rows[0]);
@@ -166,6 +180,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
         logger.warn('Order cancellation lost race', {
           orderId,
           userId,
+          requestId: req.requestId,
         });
 
         return res.status(409).json({
@@ -183,6 +198,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
             amount: order.total_amount,
             items: order.items,
             restoreInventory: order.status !== 'inventory_failed',
+            requestId: req.requestId,
           }),
         ]
       );
@@ -193,6 +209,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
         orderId,
         userId,
         amount: order.total_amount,
+        requestId: req.requestId,
       });
 
       return res.status(202).json(updateResult.rows[0]);
@@ -202,6 +219,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
       orderId,
       userId,
       status: order.status,
+      requestId: req.requestId,
     });
 
     return res.status(409).json({
@@ -214,6 +232,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
           error: rollbackErr.message,
           orderId,
           userId,
+          requestId: req.requestId,
         });
       });
     }
@@ -223,6 +242,7 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
       stack: err.stack,
       orderId,
       userId,
+      requestId: req.requestId,
     });
 
     return res.status(500).json({

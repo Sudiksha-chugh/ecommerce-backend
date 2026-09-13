@@ -4,9 +4,11 @@ const jwt = require('jsonwebtoken');
 const pool = require('./db');
 const authenticateToken = require('./middleware/auth');
 const logger = require('./logger');
+const requestIdMiddleware = require('./requestId');
 
 const app = express();
 app.use(express.json());
+app.use(requestIdMiddleware);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
@@ -32,7 +34,11 @@ app.post('/register', async (req, res) => {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'Email already registered' });
     }
-       logger.error('Registration failed', { error: err.message, email });
+      logger.error('Registration failed', {
+        error: err.message,
+        email,
+        requestId: req.requestId,
+      });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -67,10 +73,19 @@ app.post('/login', async (req, res) => {
       { expiresIn: '1h' }
     );
 
-    logger.info('User logged in', { userId: user.id, email: user.email, role: user.role });
+    logger.info('User logged in', {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      requestId: req.requestId,
+    });
     res.status(200).json({ token });
   } catch (err) {
-      logger.error('Login failed', { error: err.message, email });
+      logger.error('Login failed', {
+        error: err.message,
+        email,
+        requestId: req.requestId,
+      });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });

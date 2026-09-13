@@ -3,9 +3,11 @@ const { client } = require('./redisClient');
 const catalogClient = require('./catalogClient');
 const authenticateToken = require('./middleware/auth');
 const logger = require('./logger');
+const requestIdMiddleware = require('./requestId');
 
 const app = express();
 app.use(express.json());
+app.use(requestIdMiddleware);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
@@ -21,12 +23,16 @@ app.post('/cart/items', authenticateToken, async (req, res) => {
 
   let product;
   try {
-    product = await catalogClient.getProduct(productId);
+    product = await catalogClient.getProduct(productId, req.requestId);
   } catch (err) {
         if (err.response && err.response.status === 404) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    logger.error('Failed to reach catalog-service', { error: err.message, productId });
+    logger.error('Failed to reach catalog-service', {
+      error: err.message,
+      productId,
+      requestId: req.requestId,
+    });
     return res.status(503).json({ error: 'Catalog service unavailable' });
   }
 
@@ -43,7 +49,12 @@ app.post('/cart/items', authenticateToken, async (req, res) => {
 
   await client.set(cartKey, JSON.stringify(cart));
 
-  logger.info('Item added to cart', { userId, productId: product.id, quantity });
+  logger.info('Item added to cart', {
+    userId,
+    productId: product.id,
+    quantity,
+    requestId: req.requestId,
+  });
   res.status(201).json(cart);
 });
 

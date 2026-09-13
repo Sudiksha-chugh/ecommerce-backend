@@ -59,6 +59,7 @@ async function startConsumer() {
 
         logger.info('Received order for payment processing', {
           orderId: order.id,
+          requestId: order.requestId,
         });
 
         // Check whether a payment already exists for this order
@@ -88,7 +89,7 @@ async function startConsumer() {
         }));
 
         // Reserve inventory
-        await reserveStock(order.id, stockItems);
+        await reserveStock(order.id, stockItems, order.requestId);
 
         logger.info('Stock reserved successfully', {
           orderId: order.id,
@@ -100,7 +101,7 @@ async function startConsumer() {
 
         // Release inventory if payment failed
         if (paymentResult.status === 'failed') {
-          await releaseReservation(order.id);
+          await releaseReservation(order.id, order.requestId);
 
           logger.info('Inventory reservation released after payment failure', {
             orderId: order.id,
@@ -111,7 +112,7 @@ async function startConsumer() {
         // Confirm inventory if payment succeeded
         if (paymentResult.status === 'succeeded') {
           try {
-            await confirmReservation(order.id);
+            await confirmReservation(order.id, order.requestId);
 
             logger.info(
               'Inventory reservation confirmed after payment success',
@@ -136,6 +137,12 @@ async function startConsumer() {
             }
           }
         }
+
+        // Create event only after the final payment status is known
+        const paymentProcessedEvent = {
+          ...paymentResult,
+          requestId: order.requestId,
+        };
 
         // Save payment and outbox event atomically
         const client = await pool.connect();
@@ -172,7 +179,7 @@ async function startConsumer() {
               payload
             )
             VALUES ($1, $2)`,
-            [outgoingQueue, JSON.stringify(paymentResult)]
+            [outgoingQueue, JSON.stringify(paymentProcessedEvent)]
           );
 
           logger.info('Payment result added to outbox', {
@@ -229,6 +236,7 @@ async function startConsumer() {
 
         logger.info('Received refund request', {
           orderId: refundRequest.orderId,
+          requestId: refundRequest.requestId,
         });
 
         // Check whether this refund was already processed
@@ -260,15 +268,25 @@ async function startConsumer() {
           refundResult.status === 'refunded' &&
           refundRequest.restoreInventory !== false
         ) {
-          await refundReservation(refundRequest.orderId);
+          await refundReservation(
+            refundRequest.orderId,
+            refundRequest.requestId
+          );
 
           logger.info(
             'Inventory reservation refunded after successful refund',
             {
               orderId: refundResult.orderId,
+              requestId: refundRequest.requestId,
             }
           );
         }
+
+        // Add requestId to the outgoing refund event
+        const refundProcessedEvent = {
+          ...refundResult,
+          requestId: refundRequest.requestId,
+        };
 
         const client = await pool.connect();
 
@@ -299,7 +317,7 @@ async function startConsumer() {
               payload
             )
             VALUES ($1, $2)`,
-            [refundResultQueue, JSON.stringify(refundResult)]
+            [refundResultQueue, JSON.stringify(refundProcessedEvent)]
           );
 
           await client.query('COMMIT');
@@ -313,6 +331,7 @@ async function startConsumer() {
         logger.info('Refund processed', {
           orderId: refundResult.orderId,
           status: refundResult.status,
+          requestId: refundRequest.requestId,
         });
 
         channel.ack(msg);

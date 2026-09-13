@@ -1,18 +1,18 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: catalog-db-secret
+  name: payments-db-secret
 type: Opaque
 stringData:
-  POSTGRES_USER: catalog_user
-  POSTGRES_PASSWORD: catalog_pass
-  POSTGRES_DB: catalog_db
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_DB: payments_db
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: catalog-db-pvc
+  name: payments-db-pvc
 spec:
   accessModes:
     - ReadWriteOnce
@@ -24,24 +24,24 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: catalog-db
+  name: payments-db
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: catalog-db
+      app: payments-db
   template:
     metadata:
       labels:
-        app: catalog-db
+        app: payments-db
     spec:
       containers:
-        - name: catalog-db
+        - name: payments-db
           image: postgres:16
 
           envFrom:
             - secretRef:
-                name: catalog-db-secret
+                name: payments-db-secret
 
           ports:
             - containerPort: 5432
@@ -55,22 +55,22 @@ spec:
               memory: "512Mi"
 
           volumeMounts:
-            - name: catalog-db-storage
+            - name: payments-db-storage
               mountPath: /var/lib/postgresql/data
 
       volumes:
-        - name: catalog-db-storage
+        - name: payments-db-storage
           persistentVolumeClaim:
-            claimName: catalog-db-pvc
+            claimName: payments-db-pvc
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: catalog-db
+  name: payments-db
 spec:
   selector:
-    app: catalog-db
+    app: payments-db
   ports:
     - port: 5432
       targetPort: 5432

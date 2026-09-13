@@ -3,8 +3,10 @@ const pool = require('./db');
 const esClient = require('./es');
 const logger = require('./logger');
 const authenticateInternalService = require('./middleware/internalAuth');
+const requestIdMiddleware = require('./requestId');
 
 const app = express();
+app.use(requestIdMiddleware);
 app.use(express.json());
 
 const PRODUCTS_INDEX = process.env.NODE_ENV === 'test' ? 'products_test' : 'products';
@@ -47,10 +49,10 @@ app.post('/products', authenticateToken, requireAdmin, async (req, res) => {
       },
       refresh: true,
     });
-    logger.info('Product created', { productId: product.id, name: product.name, createdBy: req.user.userId });
+    logger.info('Product created', { productId: product.id, name: product.name, createdBy: req.user.userId, requestId: req.requestId });
     res.status(201).json(product);
   } catch (err) {
-    logger.error('Product creation failed', { error: err.message, name });
+    logger.error('Product creation failed', { error: err.message, name, requestId: req.requestId });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -80,7 +82,7 @@ app.get('/products/search', async (req, res) => {
     }));
     res.status(200).json(products);
   } catch (err) {
-    logger.error('Product search failed', { error: err.message, query: q });
+    logger.error('Product search failed', { error: err.message, query: q, requestId: req.requestId });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -93,7 +95,7 @@ app.get('/products/:id', async (req, res) => {
     }
         res.status(200).json(result.rows[0]);
   } catch (err) {
-    logger.error('Product lookup failed', { error: err.message, productId: req.params.id });
+    logger.error('Product lookup failed', { error: err.message, productId: req.params.id, requestId: req.requestId });
     res.status(500).json({ error: 'Something went wrong' });
   }
 });
@@ -135,6 +137,7 @@ app.post('/products/decrement-stock', authenticateInternalService, async (req, r
         logger.warn('Stock decrement failed: insufficient stock', {
           productId: item.productId,
           requestedQuantity: item.quantity,
+          requestId: req.requestId,
         });
 
         return res.status(409).json({
@@ -163,11 +166,12 @@ app.post('/products/decrement-stock', authenticateInternalService, async (req, r
         logger.error('Failed to sync stock update to Elasticsearch', {
           error: esErr.message,
           productId: product.id,
+          requestId: req.requestId,
         });
       });
     }
 
-    logger.info('Stock decremented for order', { items });
+    logger.info('Stock decremented for order', { items, requestId: req.requestId });
 
     res.status(200).json({ updated: updatedProducts });
   } catch (err) {
@@ -176,6 +180,7 @@ app.post('/products/decrement-stock', authenticateInternalService, async (req, r
     logger.error('Stock decrement failed', {
       error: err.message,
       items,
+      requestId: req.requestId,
     });
 
     res.status(500).json({ error: 'Failed to decrement stock' });
@@ -251,7 +256,7 @@ for (const product of updatedProducts) {
 }
 
     logger.info('Stock restored',
-     {items});
+     { items, requestId: req.requestId });
 
     return res.status(200).json({
       message: 'Stock restored successfully',
@@ -263,6 +268,7 @@ for (const product of updatedProducts) {
     logger.error({
       message: 'Failed to restore stock',
       error: error.message,
+      requestId: req.requestId,
     });
 
     return res.status(500).json({
@@ -433,6 +439,7 @@ if (existingReservations.rows.length > 0) {
     logger.error('Stock reservation failed', {
       orderId,
       error: error.message,
+      requestId: req.requestId,
     });
 
     return res.status(409).json({
@@ -475,6 +482,7 @@ app.post(
         logger.info('Inventory reservation confirmed', {
           orderId,
           reservations: result.rows,
+          requestId: req.requestId,
         });
 
         return res.status(200).json({
@@ -517,6 +525,7 @@ app.post(
       logger.error('Failed to confirm inventory reservation', {
         orderId,
         error: error.message,
+        requestId: req.requestId,
       });
 
       return res.status(500).json({
@@ -594,6 +603,7 @@ app.post(
       logger.info('Inventory reservation released', {
         orderId,
         reservations: releasedResult.rows,
+        requestId: req.requestId,
       });
 
       return res.status(200).json({
@@ -606,6 +616,7 @@ app.post(
       logger.error('Failed to release inventory reservation', {
         orderId,
         error: error.message,
+        requestId: req.requestId,
       });
 
       return res.status(500).json({
@@ -716,6 +727,7 @@ app.post(
       logger.info('Inventory refunded', {
         orderId,
         reservations: refundedResult.rows,
+        requestId: req.requestId,
       });
 
       return res.status(200).json({
@@ -729,6 +741,7 @@ app.post(
       logger.error('Failed to refund inventory', {
         orderId,
         error: error.message,
+        requestId: req.requestId,
       });
 
       return res.status(500).json({
