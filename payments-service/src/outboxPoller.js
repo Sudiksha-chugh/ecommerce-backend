@@ -3,10 +3,14 @@ const { getChannel, connectRabbitMQ } = require('./rabbitmq');
 
 const POLL_INTERVAL_MS = 3000;
 let intervalHandle = null;
+let isPolling = false;
 
 async function pollOnce() {
-  const client = await pool.connect();
+  if (isPolling) return;
 
+  isPolling = true;
+
+  const client = await pool.connect();
   try {
     const result = await client.query(
       `SELECT *
@@ -65,6 +69,7 @@ async function pollOnce() {
     }
   } finally {
     client.release();
+    isPolling = false;
   }
 }
 

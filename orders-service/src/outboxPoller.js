@@ -2,8 +2,13 @@ const pool = require('./db');
 const { getChannel, connectRabbitMQ } = require('./rabbitmq');
 const POLL_INTERVAL_MS = 3000;
 let intervalHandle = null;
+let isPolling = false;
 
 async function pollOnce() {
+  if (isPolling) return;
+
+  isPolling = true;
+
   const client = await pool.connect();
 
   try {

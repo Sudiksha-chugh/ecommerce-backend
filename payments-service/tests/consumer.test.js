@@ -694,4 +694,67 @@ describe('startConsumer', () => {
 
     expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
   });
+  it('handles concurrent duplicate order messages safely', async () => {
+  jest.useRealTimers();
+
+  processPayment.mockReturnValue({
+    orderId: 502,
+    userId: 1,
+    amount: '20.00',
+    status: 'succeeded',
+  });
+
+  await startConsumer();
+
+  const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+  const fakeOrder = {
+    id: 502,
+    user_id: 1,
+    total_amount: '20.00',
+    requestId: 'test-request-123',
+    items: [
+      {
+        productId: 1,
+        quantity: 1,
+      },
+    ],
+  };
+
+  const fakeMsg1 = {
+    content: Buffer.from(JSON.stringify(fakeOrder)),
+  };
+
+  const fakeMsg2 = {
+    content: Buffer.from(JSON.stringify(fakeOrder)),
+  };
+
+  await Promise.all([
+    consumeCallback(fakeMsg1),
+    consumeCallback(fakeMsg2),
+  ]);
+
+  const payments = await pool.query(
+    `SELECT order_id
+     FROM payments
+     WHERE order_id = $1`,
+    [502]
+  );
+
+  const outbox = await pool.query(
+    `SELECT event_type
+     FROM outbox_events
+     WHERE event_type = $1
+       AND payload->>'orderId' = $2`,
+    ['payment_processed', '502']
+  );
+
+  expect(payments.rows.length).toBe(1);
+  expect(outbox.rows.length).toBe(1);
+
+  expect(processPayment).toHaveBeenCalledTimes(1);
+  expect(reserveStock).toHaveBeenCalledTimes(1);
+  expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg1);
+  expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg2);
+});
 });
