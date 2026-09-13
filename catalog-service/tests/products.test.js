@@ -13,7 +13,7 @@ function makeToken(userId, role = 'admin') {
       role,
     },
     process.env.JWT_SECRET,
-    { expiresIn: '1h' }
+    { expiresIn: '1h', algorithm: 'HS256' }
   );
 }
 
@@ -86,6 +86,58 @@ describe('POST /products', () => {
     });
 
     expect(esResult._source.name).toBe('Wireless Headphones');
+  });
+
+  it('rejects a product with negative price', async () => {
+    const res = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Invalid Price Product',
+        price: -10,
+        stock: 5,
+      });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a product with negative stock', async () => {
+    const res = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Invalid Stock Product',
+        price: 10,
+        stock: -5,
+      });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a product with a non-numeric price', async () => {
+    const res = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Invalid Price Type Product',
+        price: '10',
+        stock: 5,
+      });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a product with a non-integer stock', async () => {
+    const res = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Invalid Stock Type Product',
+        price: 10,
+        stock: 2.5,
+      });
+
+    expect(res.statusCode).toBe(400);
   });
 
   it('rejects a product with missing required fields with 400', async () => {

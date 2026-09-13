@@ -242,18 +242,26 @@ app.post('/products/restore-stock', authenticateInternalService, async (req, res
     await client.query('COMMIT');
 
    // Sync updated products to Elasticsearch
-for (const product of updatedProducts) {
-  await esClient.index({
-    index: PRODUCTS_INDEX,
-    id: product.id.toString(),
-    document: {
-      name: product.name,
-      description: product.description,
-      price: product.price,
-      stock: product.stock,
-    },
-  });
-}
+    try {
+      for (const product of updatedProducts) {
+        await esClient.index({
+          index: PRODUCTS_INDEX,
+          id: product.id.toString(),
+          document: {
+            name: product.name,
+            description: product.description,
+            price: product.price,
+            stock: product.stock,
+          },
+        });
+      }
+    } catch (error) {
+      logger.error({
+        message: 'Failed to sync restored stock to Elasticsearch',
+        error: error.message,
+        requestId: req.requestId,
+      });
+    }
 
     logger.info('Stock restored',
      { items, requestId: req.requestId });

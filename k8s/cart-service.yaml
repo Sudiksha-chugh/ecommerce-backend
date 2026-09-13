@@ -1,12 +1,3 @@
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cart-service-secret
-type: Opaque
-stringData:
-  JWT_SECRET: super-secret-dev-key-change-in-prod
-
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

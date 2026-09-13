@@ -5,7 +5,7 @@ const pool = require('../src/db');
 require('dotenv').config();
 
 function makeToken(userId) {
-  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
 }
 
 describe('POST /orders', () => {

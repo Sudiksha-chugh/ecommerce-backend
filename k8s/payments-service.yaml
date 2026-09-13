@@ -23,13 +23,25 @@ spec:
             - name: DB_PORT
               value: "5432"
             - name: DB_USER
-              value: postgres
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-secret
+                  key: POSTGRES_USER
             - name: DB_PASSWORD
-              value: postgres
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-secret
+                  key: POSTGRES_PASSWORD
             - name: DB_NAME
-              value: payments_db
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-secret
+                  key: POSTGRES_DB
             - name: RABBITMQ_URL
-              value: amqp://guest:guest@rabbitmq:5672
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: url
             - name: PORT
               value: "4004"
             - name: CATALOG_SERVICE_URL

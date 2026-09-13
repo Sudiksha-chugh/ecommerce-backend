@@ -1,8 +1,8 @@
 # 🛒 E-Commerce Backend — Distributed Microservices Platform
 
-A production-oriented **Node.js microservices backend** designed to demonstrate real-world distributed-system and backend engineering patterns used in modern e-commerce platforms.
+A production-oriented **Node.js microservices backend** designed to demonstrate practical backend engineering and distributed-systems patterns used in modern e-commerce platforms.
 
-The system consists of independently deployable services with **database-per-service isolation**, synchronous REST communication, asynchronous event-driven workflows, centralized API routing, resilient message processing, inventory management, and payment reconciliation.
+The system consists of independently deployable services with **database-per-service isolation**, synchronous REST communication, asynchronous event-driven workflows, centralized API routing, resilient message processing, inventory reservation, payment processing, and reconciliation.
 
 The complete stack can be run locally using **Docker Compose** and deployed using **Kubernetes**.
 
@@ -10,7 +10,7 @@ The complete stack can be run locally using **Docker Compose** and deployed usin
 
 ## ✨ Engineering Highlights
 
-* 🔐 **Defense-in-depth JWT authentication** — every protected service independently validates tokens
+* 🔐 **Defense-in-depth JWT authentication** — every protected service independently validates JWTs
 * 🧩 **Database-per-service architecture** using PostgreSQL and Redis
 * 🌐 **API Gateway** for centralized routing and rate limiting
 * 🔎 **Elasticsearch fuzzy product search**
@@ -18,12 +18,12 @@ The complete stack can be run locally using **Docker Compose** and deployed usin
 * 📦 **Inventory management and stock reservation**
 * 💳 **Asynchronous payment processing**
 * 📨 **RabbitMQ event-driven communication**
-* 🔁 **Transactional Outbox Pattern** for reliable event publishing
-* ♻️ **Idempotent order/payment processing**
-* ☠️ **Dead-Letter Queues** for failed/unprocessable messages
+* 🔁 **Transactional Outbox Pattern** for reliable event publication
+* ♻️ **Idempotent order processing**
+* ☠️ **Dead-Letter Queues** for failed or unprocessable messages
 * 🔄 **RabbitMQ connection recovery with retry and backoff**
 * ❌ **Order cancellation and payment reconciliation**
-* 🧾 **Centralized structured logging**
+* 🧾 **Centralized structured logging with Elasticsearch**
 * 🚦 **API Gateway rate limiting**
 * 🐳 **Docker Compose containerization**
 * ☸️ **Kubernetes deployment**
@@ -67,31 +67,34 @@ The complete stack can be run locally using **Docker Compose** and deployed usin
                                                     │                        │
                                                     │ order_placed           │
                                                     │ payment_processed      │
-                                                    │ refund_processed        │
+                                                    │ refund_requested       │
+                                                    │ refund_processed       │
                                                     │ Dead-letter queues      │
                                                     └────────────────────────┘
 ```
 
-### Service Responsibilities
+## Service Responsibilities
 
-| Service              |   Port | Storage                    | Responsibility                                           |
-| -------------------- | -----: | -------------------------- | -------------------------------------------------------- |
-| **API Gateway**      | `8080` | —                          | Single entry point, routing and rate limiting            |
-| **Auth Service**     | `4000` | PostgreSQL                 | Registration, login, JWT issuance and authentication     |
-| **Catalog Service**  | `4001` | PostgreSQL + Elasticsearch | Products, inventory and fuzzy search                     |
-| **Cart Service**     | `4002` | Redis                      | User cart management and product validation              |
-| **Orders Service**   | `4003` | PostgreSQL                 | Orders, cancellation and transactional outbox            |
-| **Payments Service** | `4004` | PostgreSQL                 | Payment processing, reconciliation and event consumption |
+| Service              |   Port | Storage                    | Responsibility                                             |
+| -------------------- | -----: | -------------------------- | ---------------------------------------------------------- |
+| **API Gateway**      | `8080` | —                          | Single entry point, request routing and rate limiting      |
+| **Auth Service**     | `4000` | PostgreSQL                 | Registration, login, JWT issuance and authentication       |
+| **Catalog Service**  | `4001` | PostgreSQL + Elasticsearch | Products, inventory and fuzzy search                       |
+| **Cart Service**     | `4002` | Redis                      | User cart management and product validation                |
+| **Orders Service**   | `4003` | PostgreSQL                 | Orders, cancellation, idempotency and transactional outbox |
+| **Payments Service** | `4004` | PostgreSQL                 | Payment processing, reconciliation and event consumption   |
+
+Each service owns its persistence layer and is independently testable and deployable.
 
 ---
 
 # 🔐 Authentication & Authorization
 
-Authentication follows a **defense-in-depth** approach.
+Authentication follows a **defense-in-depth** model.
 
 The API Gateway provides centralized routing, but protected services do not blindly trust the Gateway.
 
-Each service independently validates the JWT before processing protected requests.
+Each protected service independently validates the JWT before processing the request.
 
 ```text
 Client
@@ -104,9 +107,7 @@ API Gateway
 Protected Service
    │
    ├── Verify JWT
-   │
    ├── Extract user identity
-   │
    └── Process request
 ```
 
@@ -120,15 +121,15 @@ POST /cart/items
 
 does not accept a `userId`.
 
-This prevents a client from modifying another user's identifier and attempting to access their cart.
+This prevents a client from supplying another user's identifier when accessing protected resources.
 
-The system also supports **role-based access control**, including an `admin` role for privileged operations.
+The system also supports **role-based access control**, including an `admin` role for privileged catalog operations.
 
 ---
 
 # 🔄 Communication Patterns
 
-The architecture uses both **synchronous HTTP** and **asynchronous messaging**, depending on the consistency and latency requirements of each operation.
+The system uses both **synchronous HTTP** and **asynchronous messaging**, depending on the consistency and latency requirements of each workflow.
 
 ## 1. Synchronous HTTP
 
@@ -143,24 +144,24 @@ Catalog Service
       │
       ├── Product exists?
       ├── Product available?
-      └── Current price?
+      └── Current product data?
 ```
 
 ### Why HTTP?
 
 The Cart Service requires an immediate response before modifying the cart.
 
-If the Catalog Service is unavailable, the request fails with a controlled `503` rather than hanging or adding an unverified product.
+If the Catalog Service is unavailable, the request fails with a controlled `503` response rather than adding an unverified product.
 
 ### Trade-off
 
-The services are temporarily coupled during the request.
+This introduces temporary runtime coupling between the services.
 
 ---
 
 ## 2. Asynchronous Event-Driven Communication
 
-Order and payment processing are intentionally decoupled.
+Order and payment processing are decoupled through RabbitMQ.
 
 ```text
 Orders Service
@@ -180,13 +181,13 @@ Payments Service
 Orders Service
 ```
 
-The Orders Service does not need to wait synchronously for payment processing before responding to the client.
+The Orders Service does not synchronously wait for payment processing before returning the initial order response.
 
 ### Benefits
 
 * Loose coupling
-* Independent scaling
-* Better resilience to temporary service failures
+* Independent service scaling
+* Better resilience to temporary failures
 * Asynchronous processing
 * Eventual consistency
 
@@ -204,11 +205,9 @@ API Gateway
 Orders Service
   │
   ├── BEGIN TRANSACTION
-  │
   ├── Create order
-  │
+  ├── Reserve inventory
   ├── Create outbox event
-  │
   └── COMMIT
           │
           ▼
@@ -221,9 +220,7 @@ Orders Service
    Payments Service
           │
           ├── Process payment
-          │
           ├── Persist payment state
-          │
           └── Publish payment_processed
                          │
                          ▼
@@ -233,13 +230,15 @@ Orders Service
                   Update order status
 ```
 
-The system therefore follows an **eventual consistency** model between order creation and payment processing.
+The system uses an **eventual consistency** model between order creation and payment processing.
+
+The initial order transaction persists the business state and corresponding outbox event atomically. Payment processing then happens asynchronously.
 
 ---
 
 # 🔁 Transactional Outbox Pattern
 
-The Orders Service uses the **Transactional Outbox Pattern** to prevent the classic dual-write problem.
+The Orders Service uses the **Transactional Outbox Pattern** to avoid the classic dual-write problem.
 
 Without an outbox:
 
@@ -253,7 +252,7 @@ Database ──────── success
 Publish Event ─── failure
 ```
 
-The order would exist, but the event could be lost.
+The order would exist while the corresponding event could be lost.
 
 With the outbox:
 
@@ -262,28 +261,30 @@ BEGIN TRANSACTION
 
     ├── INSERT order
     │
+    ├── Reserve inventory
+    │
     └── INSERT outbox_event
 
 COMMIT
 ```
 
-Both records succeed or both roll back.
+Both the order and outbox record succeed or roll back together.
 
 A background poller periodically checks for unpublished events and publishes them to RabbitMQ.
 
-If RabbitMQ is temporarily unavailable, the event remains in PostgreSQL and can be retried later.
+If RabbitMQ is temporarily unavailable, the event remains persisted in PostgreSQL and can be retried later.
 
-This provides reliable event publication without requiring the database transaction and RabbitMQ operation to participate in a distributed transaction.
+This provides reliable event publication without requiring PostgreSQL and RabbitMQ to participate in a distributed transaction.
 
 ---
 
 # ♻️ Idempotency
 
-The system handles retries at different levels.
+The system handles duplicate requests and duplicate events at different levels.
 
-### API-level idempotency
+## API-Level Idempotency
 
-Idempotency keys prevent retrying the same client request from creating duplicate business operations.
+Order creation supports an `Idempotency-Key` to prevent retries from creating duplicate orders.
 
 ```text
 Client
@@ -292,18 +293,51 @@ Client
    ▼
 Orders Service
    │
-   ├── First request → process
+   ├── First request → create order
    │
    └── Retry → return existing result
 ```
 
-### Event-level idempotency
+The Gateway forwards the idempotency key to the Orders Service so the business service can enforce the behavior.
 
-RabbitMQ provides **at-least-once delivery**.
+## Event-Level Idempotency
 
-A consumer may therefore receive the same event more than once, for example if processing succeeds but the consumer crashes before acknowledging the message.
+RabbitMQ provides **at-least-once delivery** semantics.
 
-Consumers must therefore make business processing safe against duplicate delivery.
+A consumer can therefore receive the same event more than once—for example, when processing succeeds but the consumer fails before acknowledging the message.
+
+Consumers are designed to make business processing safe against duplicate event delivery.
+
+---
+
+# 📦 Inventory Management
+
+Inventory is managed by the Catalog Service.
+
+Products contain stock information, while inventory reservations associate stock with an order lifecycle.
+
+```text
+Product
+ ├── product_id
+ ├── price
+ └── stock
+
+Inventory Reservation
+ ├── order_id
+ ├── product_id
+ ├── quantity
+ ├── status
+ ├── created_at
+ └── expires_at
+```
+
+Inventory is **reserved as part of order processing** rather than being treated as a simple static product attribute.
+
+Reservations use uniqueness constraints to prevent duplicate reservations for the same order and product.
+
+Inventory can subsequently be released when the corresponding order workflow requires it, such as cancellation, refund, or reservation expiration.
+
+This prevents overselling while keeping inventory state coordinated with the order lifecycle.
 
 ---
 
@@ -311,9 +345,7 @@ Consumers must therefore make business processing safe against duplicate deliver
 
 Payments are processed asynchronously after an order is placed.
 
-The system also includes **payment status reconciliation** to handle cases where the order and payment states temporarily become inconsistent.
-
-Example:
+The system also includes **payment reconciliation** to handle temporary inconsistencies between payment and order state.
 
 ```text
 Order
@@ -333,81 +365,53 @@ Payment Processing
     Correct final state
 ```
 
-This prevents temporary distributed-state inconsistencies from becoming permanent business-state errors.
-
----
-
-# 📦 Inventory Management
-
-Inventory is maintained by the Catalog Service.
-
-Products contain stock information and inventory reservation records.
-
-Example inventory model:
-
-```text
-Product
- ├── product_id
- ├── price
- └── stock
-
-Inventory Reservation
- ├── order_id
- ├── product_id
- ├── quantity
- ├── status
- ├── created_at
- └── expires_at
-```
-
-Reservations are associated with an order and product using a uniqueness constraint to prevent duplicate reservations for the same order/product combination.
-
-Inventory state is therefore treated as part of the order lifecycle rather than simply being a static product attribute.
+The reconciliation workflow is designed to prevent temporary distributed-state inconsistencies from becoming permanent business-state errors.
 
 ---
 
 # ❌ Order Cancellation
 
-Orders can be cancelled only when their current state permits cancellation.
+Orders can only be cancelled when their current state permits cancellation.
 
-The system protects against race conditions between:
+The system validates order state before performing cancellation to protect against races between payment processing and cancellation.
 
 ```text
 Payment Processing
         │
         ▼
 Order Completion
-
        vs.
-
 Order Cancellation
         │
         ▼
 Order Cancelled
 ```
 
-State validation prevents a completed order from being incorrectly cancelled after payment processing has already finalized it.
+A completed order cannot be incorrectly transitioned back to a cancellable state after payment processing has finalized it.
+
+Cancellation and refund workflows also interact with inventory and payment state where required.
 
 ---
 
 # 📨 RabbitMQ Reliability
 
-RabbitMQ is used for asynchronous communication between services.
+RabbitMQ provides asynchronous communication between Orders and Payments services.
 
-The system includes:
+The messaging layer includes:
 
-* Durable event-processing workflow
-* Dead-letter queues
+* Durable event-processing workflows
+* Consumer acknowledgements
 * Retry handling
+* Dead-Letter Queues
 * Connection recovery
-* Backoff between reconnection attempts
-* Consumer acknowledgement
-* Idempotent processing
-* Payment and refund events
+* Reconnection backoff
+* Idempotent event processing
+* Payment events
+* Refund events
 
 ---
 
-## 🔄 Self-Healing RabbitMQ Connections
+# 🔄 Self-Healing RabbitMQ Connections
 
 Orders and Payments Services monitor RabbitMQ connection lifecycle events.
 
@@ -432,7 +436,7 @@ Reconnect
    └── Failure → Retry
 ```
 
-This behavior has been tested using real RabbitMQ outages rather than relying only on mocked tests.
+The connection recovery behavior has been tested against real RabbitMQ outages.
 
 For example:
 
@@ -441,15 +445,13 @@ docker stop rabbitmq
 docker start rabbitmq
 ```
 
-The services can recover without requiring a manual application restart.
+The affected services can recover their RabbitMQ connections without requiring a manual application restart.
 
 ---
 
 # ☠️ Dead-Letter Queues
 
-Messages that cannot be successfully parsed or processed are moved to a Dead-Letter Queue rather than silently discarded.
-
-Example:
+Messages that cannot be successfully processed are routed to a Dead-Letter Queue rather than being silently discarded.
 
 ```text
 order_placed
@@ -465,13 +467,13 @@ Payments Consumer
        order_placed_dlq
 ```
 
-The original message and processing failure information can then be inspected through the RabbitMQ management interface.
+Dead-lettered messages can be inspected through the RabbitMQ management interface for debugging and operational investigation.
 
 ---
 
 # 🚦 API Gateway Rate Limiting
 
-The API Gateway provides rate limiting to protect downstream services from excessive requests.
+The API Gateway provides rate limiting to protect downstream services from excessive request traffic.
 
 ```text
 Client
@@ -492,21 +494,22 @@ For a multi-replica production deployment, a shared Redis-backed rate-limit stor
 
 # 🧾 Centralized Structured Logging
 
-Services use structured logging to make distributed requests easier to diagnose.
+The services use structured logging to make distributed workflows easier to diagnose.
 
-Instead of relying only on plain console output, logs contain structured fields such as:
+Logs contain structured fields such as:
 
 ```text
 timestamp
 service
 level
 message
+requestId
 orderId
 userId
 eventType
 ```
 
-Logs are shipped to Elasticsearch, allowing service-level filtering and investigation across the distributed system.
+Logs are shipped to Elasticsearch, allowing logs to be searched and filtered across services.
 
 Example:
 
@@ -514,16 +517,17 @@ Example:
 service: orders-service
 eventType: order_placed
 orderId: 42
+requestId: 7f8...
 level: info
 ```
 
-This makes debugging distributed workflows significantly easier than inspecting individual container logs.
+Structured logging makes it easier to trace business workflows and investigate failures across multiple containers.
 
 ---
 
 # 🔎 Elasticsearch Product Search
 
-The Catalog Service stores product data in PostgreSQL and maintains a searchable Elasticsearch index.
+The Catalog Service stores product data in PostgreSQL and maintains an Elasticsearch search index.
 
 This provides:
 
@@ -546,13 +550,13 @@ iPhone Case
 iPhone Charger
 ```
 
-The PostgreSQL database remains the primary source of product data while Elasticsearch acts as the search index.
+PostgreSQL remains the primary source of product data while Elasticsearch acts as the search index.
 
 ---
 
 # 🛒 Redis Cart Storage
 
-Cart data is stored in Redis because carts are ephemeral, frequently accessed data.
+Cart data is stored in Redis because carts are ephemeral and frequently accessed.
 
 ```text
 User
@@ -566,9 +570,9 @@ Redis
  └── user cart
 ```
 
-Before adding an item, Cart Service validates the product against Catalog Service.
+Before adding an item, the Cart Service validates the product against the Catalog Service.
 
-This prevents invalid product IDs from entering the cart.
+This prevents invalid or nonexistent products from being added to carts.
 
 ---
 
@@ -576,7 +580,7 @@ This prevents invalid product IDs from entering the cart.
 
 The complete distributed environment can be started locally using Docker Compose.
 
-Infrastructure includes:
+The environment includes:
 
 * API Gateway
 * Auth Service
@@ -589,16 +593,17 @@ Infrastructure includes:
 * Elasticsearch
 * RabbitMQ
 
+Service dependencies use health checks where appropriate so application services start against ready infrastructure.
+
 ---
 
 # ☸️ Kubernetes
 
-The project also includes Kubernetes manifests for deployment.
-
-The manifests cover:
+The project includes Kubernetes manifests for local deployment.
 
 ```text
 k8s/
+
 ├── redis.yaml
 ├── auth-db.yaml
 ├── auth-service.yaml
@@ -615,7 +620,7 @@ k8s/
 
 The application has been tested using **Docker Desktop's local Kubernetes cluster**.
 
-Stateless services can be independently scaled, while stateful infrastructure currently uses Kubernetes storage resources where configured.
+Stateless services can be independently scaled, while stateful infrastructure currently uses the Kubernetes resources configured in the manifests.
 
 ---
 
@@ -641,10 +646,12 @@ Stateless services can be independently scaled, while stateful infrastructure cu
 # 📁 Project Structure
 
 ```text
-ecommerce-microservices/
-│
+ecommerce-backend/
+
 ├── gateway/
 │   ├── src/
+│   │   ├── app.js
+│   │   └── ...
 │   ├── tests/
 │   ├── Dockerfile
 │   └── package.json
@@ -732,8 +739,8 @@ ecommerce-microservices/
 ## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/<repository-name>.git
-cd <repository-name>
+git clone https://github.com/Sudiksha-chugh/ecommerce-backend.git
+cd ecommerce-backend
 ```
 
 ## 2. Start the Stack
@@ -745,7 +752,7 @@ docker compose up -d --build
 ## 3. Verify Containers
 
 ```bash
-docker ps
+docker compose ps
 ```
 
 View all logs:
@@ -772,13 +779,13 @@ To remove database and cache volumes:
 docker compose down -v
 ```
 
-> ⚠️ Removing volumes deletes local database/cache data.
+> ⚠️ Removing volumes deletes local database and cache data.
 
 ---
 
 # 🌐 API Quick Start
 
-All client requests should normally go through:
+Client requests should normally go through the API Gateway:
 
 ```text
 http://localhost:8080
@@ -809,6 +816,8 @@ curl "http://localhost:8080/products/search?q=hub"
 ```
 
 ## Create a Product
+
+Creating products requires an authenticated user with the appropriate role.
 
 ```bash
 curl -X POST http://localhost:8080/products \
@@ -854,7 +863,7 @@ curl -X POST http://localhost:8080/orders \
   }'
 ```
 
-The authenticated user's identity is extracted from the JWT rather than accepted from the request body.
+The authenticated user's identity is extracted from the verified JWT rather than accepted from the request body.
 
 ---
 
@@ -876,8 +885,9 @@ The dashboard can be used to inspect:
 
 * `order_placed`
 * `payment_processed`
+* `refund_requested`
 * `refund_processed`
-* Dead-letter queues
+* Dead-Letter Queues
 * Queue depth
 * Consumer status
 * Individual messages
@@ -886,89 +896,180 @@ The dashboard can be used to inspect:
 
 # 🧪 Testing
 
-Each service has its own isolated Jest test suite.
+Each service maintains its own isolated Jest test suite.
+
+The project currently has **109/109 automated tests passing** across all six services.
+
+| Service          |   Tests |
+| ---------------- | ------: |
+| Auth Service     |      12 |
+| Catalog Service  |      31 |
+| Cart Service     |       9 |
+| Orders Service   |      30 |
+| Payments Service |      22 |
+| Gateway          |       5 |
+| **Total**        | **109** |
+
+## Running Tests
+
+### Auth Service
 
 ```bash
-cd auth-service && npm test
-cd catalog-service && npm test
-cd cart-service && npm test
-cd orders-service && npm test
-cd payments-service && npm test
-cd gateway && npm test
+docker compose exec -e NODE_ENV=test -e DB_NAME_TEST=auth_db_test \
+  auth-service npm test -- --runInBand
+```
+
+### Catalog Service
+
+```bash
+docker compose exec -e NODE_ENV=test -e DB_NAME_TEST=catalog_db_test \
+  catalog-service npm test -- --runInBand
+```
+
+### Cart Service
+
+```bash
+docker compose exec cart-service npm test -- --runInBand
+```
+
+### Orders Service
+
+```bash
+docker compose exec -e NODE_ENV=test -e DB_NAME_TEST=orders_db_test \
+  orders-service npm test -- --runInBand
+```
+
+### Payments Service
+
+```bash
+docker compose exec -e NODE_ENV=test -e DB_NAME_TEST=payments_db_test \
+  payments-service npm test -- --runInBand
+```
+
+### Gateway
+
+```bash
+docker compose exec gateway npm test -- --runInBand
 ```
 
 ## Test Coverage
 
-The test suites cover both normal functionality and distributed-system failure scenarios.
+The automated suites cover both normal functionality and distributed-system failure scenarios.
 
-### Orders Service
+### Authentication
 
-Tests include:
+* Registration
+* Login
+* Duplicate registration
+* Invalid credentials
+* JWT validation
+* Authorization
+* Role-based access control
+
+### Catalog
+
+* Product creation
+* Product retrieval
+* Product validation
+* Search
+* Fuzzy search
+* Inventory reservation
+* Inventory release
+* Stock validation
+* Inventory edge cases
+
+### Cart
+
+* Authentication
+* Product validation
+* Cart creation
+* Cart retrieval
+* Cart item operations
+* Catalog service failures
+
+### Orders
 
 * Order creation
 * Authentication
 * Database persistence
+* Idempotency
 * Transactional outbox
-* Transaction rollback behavior
-* Failure during event creation
+* Transaction rollback
+* Inventory reservation
+* Cancellation
+* Failure scenarios
+* Event publication
 
-The rollback test uses the real PostgreSQL connection to verify that the order and outbox event do not leave partial state when the transaction fails.
-
-### Payments Service
-
-Tests include:
+### Payments
 
 * Message consumption
 * Payment processing
+* Payment persistence
 * Event publication
+* Duplicate event handling
 * Acknowledgement
 * Invalid message handling
 * Dead-letter behavior
-* RabbitMQ reconnection
-
-Jest fake timers are used to test retry/backoff behavior deterministically.
+* Refund processing
+* Reconciliation
+* RabbitMQ reconnection and retry behavior
 
 ### Gateway
 
-Tests include:
-
 * Request proxying
-* Downstream service failure
+* Authentication forwarding
+* Idempotency-key forwarding
+* Downstream service failures
 * Graceful `503` handling
-
-The gateway test suite uses a temporary Express backend to test real proxy behavior.
+* Invalid routes and JWT handling
 
 ---
 
 # 🔗 End-to-End Testing
 
-The project includes a Postman collection:
+The project includes an executable Postman collection:
 
 ```text
 ecommerce-backend.postman_collection.json
 ```
 
-The suite exercises the system through the real API Gateway.
+The collection runs against the real API Gateway at:
 
-It covers:
+```text
+http://localhost:8080
+```
 
-* Health checks
-* Registration
+Start the backend before running the collection:
+
+```bash
+docker compose up -d
+```
+
+The collection covers:
+
+* Service health checks
+* User registration
 * Login
 * JWT authentication
 * Catalog operations
-* Public product search
-* Cart operations
 * Product validation
+* Exact product search
+* Fuzzy product search
+* Cart operations
 * Order creation
 * Token-derived user identity
-* Idempotent requests
 * Gateway error handling
 * Invalid JWT handling
 * Unknown routes
-* Inventory/order workflows
 
-The collection is designed to be executed from top to bottom because requests share variables created by previous requests.
+Requests should be executed from top to bottom because the collection uses variables generated by previous requests, including:
+
+* `token`
+* `productId`
+* `orderId`
+* `testEmail`
+
+The Postman collection provides live API-level verification through the Gateway, while the Jest suites provide deeper service-level coverage of reliability and failure scenarios.
 
 ---
 
@@ -993,12 +1094,15 @@ JWT_SECRET=your-secret-key
 
 The JWT secret must be consistent across services that independently verify tokens.
 
-Docker Compose uses service DNS names:
+Docker Compose uses service DNS names for internal communication:
 
 ```env
 AUTH_SERVICE_URL=http://auth-service:4000
+
 CATALOG_SERVICE_URL=http://catalog-service:4001
+
 RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+
 REDIS_URL=redis://redis:6379
 ```
 
@@ -1010,14 +1114,16 @@ Kubernetes uses Kubernetes Service names for service-to-service communication.
 
 GitHub Actions runs the service test suites automatically on pushes and pull requests to `main`.
 
-The CI environment provisions isolated infrastructure for each job, including:
+The CI environment provisions the infrastructure required by the test suites, including:
 
 * PostgreSQL
 * Redis
 * Elasticsearch
 * RabbitMQ
 
-The service test suites execute independently so failures can be isolated to the affected service.
+Each service test suite executes independently, allowing failures to be isolated to the affected service.
+
+Dependencies are installed using `npm ci` to provide reproducible CI and container builds based on committed lockfiles.
 
 ---
 
@@ -1031,14 +1137,22 @@ Enable Kubernetes in Docker Desktop and verify:
 kubectl get nodes
 ```
 
-Build and push service images:
+Build a service image:
 
 ```bash
 docker build -t <service-name>:local ./<service-name>
+```
 
+Tag the image:
+
+```bash
 docker tag <service-name>:local \
   <your-dockerhub-username>/<service-name>:local
+```
 
+Push the image:
+
+```bash
 docker push \
   <your-dockerhub-username>/<service-name>:local
 ```
@@ -1049,16 +1163,23 @@ Apply the infrastructure and services:
 
 ```bash
 kubectl apply -f k8s/redis.yaml
+
 kubectl apply -f k8s/auth-db.yaml
 kubectl apply -f k8s/auth-service.yaml
+
 kubectl apply -f k8s/catalog-db.yaml
 kubectl apply -f k8s/elasticsearch.yaml
 kubectl apply -f k8s/catalog-service.yaml
+
 kubectl apply -f k8s/cart-service.yaml
+
 kubectl apply -f k8s/rabbitmq.yaml
+
 kubectl apply -f k8s/orders-db.yaml
 kubectl apply -f k8s/orders-service.yaml
+
 kubectl apply -f k8s/payments-service.yaml
+
 kubectl apply -f k8s/gateway.yaml
 ```
 
@@ -1077,41 +1198,55 @@ The project intentionally keeps several areas simplified compared with a product
 
 ### Distributed Tracing
 
-There is currently no distributed tracing system such as OpenTelemetry or Jaeger.
+The application currently propagates request identifiers but does not yet implement a complete distributed tracing system such as OpenTelemetry with Jaeger or another tracing backend.
 
 ### Metrics
 
 Prometheus/Grafana monitoring has not yet been integrated.
 
-### RabbitMQ Persistence
-
-The current Kubernetes RabbitMQ deployment does not yet use a dedicated PersistentVolumeClaim for durable broker state.
-
 ### Gateway Rate Limiting
 
-The current rate limiter uses in-memory storage.
+The current rate limiter uses in-memory state.
 
 A shared Redis-backed implementation would be preferable when running multiple Gateway replicas.
 
+### RabbitMQ Persistence in Kubernetes
+
+The current Kubernetes RabbitMQ deployment does not yet use a dedicated PersistentVolumeClaim for durable broker state.
+
 ### Database Migrations
 
-Database schemas are currently initialized manually rather than through a migration framework.
+Database schemas are currently initialized through application/database setup rather than a dedicated migration framework.
 
-A production deployment would use tools such as Flyway, Liquibase, Prisma migrations, Knex migrations, or a similar migration system.
+A production deployment would use a migration system such as:
+
+* Flyway
+* Liquibase
+* Prisma Migrate
+* Knex migrations
 
 ### Kubernetes Secrets
 
-Secrets are currently represented through Kubernetes configuration and should be replaced with a dedicated secrets-management solution for production.
+Secrets are currently represented through Kubernetes configuration.
+
+A production deployment should use dedicated secrets management such as:
+
+* Kubernetes Secrets with appropriate access controls
+* External Secrets
+* HashiCorp Vault
+* Cloud-provider secret managers
 
 ### Container Registry
 
-The current Kubernetes setup uses Docker Hub images.
+The Kubernetes workflow currently uses Docker Hub images.
 
-A production environment would typically use a private registry with appropriate image-pull credentials.
+A production deployment would typically use a private registry with appropriate image-pull credentials and image scanning.
 
 ---
 
 # 🗺️ Roadmap
+
+## Completed
 
 * [x] JWT authentication
 * [x] Defense-in-depth authentication
@@ -1122,19 +1257,25 @@ A production environment would typically use a private registry with appropriate
 * [x] Redis-backed carts
 * [x] Elasticsearch fuzzy search
 * [x] Inventory management
+* [x] Inventory reservation and release
 * [x] Transactional Outbox Pattern
 * [x] RabbitMQ event-driven communication
 * [x] Retry and Dead-Letter Queues
 * [x] RabbitMQ connection recovery
 * [x] Idempotency handling
+* [x] Request ID propagation
 * [x] Order cancellation
 * [x] Payment reconciliation
 * [x] Centralized structured logging
 * [x] Docker Compose environment
 * [x] Kubernetes deployment
-* [x] End-to-end Postman testing
+* [x] Postman end-to-end testing
 * [x] GitHub Actions CI
-* [ ] Distributed tracing
+* [x] 109/109 automated tests passing
+
+## Planned
+
+* [ ] OpenTelemetry distributed tracing
 * [ ] Prometheus metrics
 * [ ] Grafana dashboards
 * [ ] Persistent RabbitMQ storage in Kubernetes
@@ -1142,6 +1283,7 @@ A production environment would typically use a private registry with appropriate
 * [ ] Horizontal Pod Autoscaling
 * [ ] Production secrets management
 * [ ] Private container registry
+* [ ] Automated deployment pipeline
 
 ---
 
@@ -1166,16 +1308,17 @@ This project demonstrates practical implementation of:
 * **Role-Based Access Control**
 * **Distributed transaction considerations**
 * **Inventory reservation**
-* **Payment reconciliation**
 * **Order state management**
-* **Redis caching/ephemeral storage**
+* **Payment reconciliation**
+* **Redis ephemeral storage**
 * **Elasticsearch indexing and fuzzy search**
 * **Centralized structured logging**
+* **Request correlation**
 * **API rate limiting**
 * **Containerization**
 * **Kubernetes orchestration**
 * **Independent service testing**
-* **End-to-end testing**
+* **End-to-end API testing**
 * **CI automation**
 
 ---
@@ -1199,6 +1342,9 @@ For a larger production deployment, the architecture could be extended with:
 * Automated deployment pipelines
 * Centralized alerting
 * Circuit breakers for synchronous service dependencies
+* API contract testing
+* Distributed configuration management
+* Automated database backups and disaster recovery
 
 ---
 
@@ -1206,7 +1352,4 @@ For a larger production deployment, the architecture could be extended with:
 
 **Sudiksha Chugh**
 
-Built to explore practical **backend engineering, microservices, distributed systems, reliability, and cloud-native architecture**.
-
----
-
+Built to explore practical **backend engineering, microservices, distributed systems, reliability engineering, and cloud-native architecture**.

@@ -4,10 +4,20 @@ const logger = require('./logger');
 const EXPIRATION_INTERVAL_MS =
   Number(process.env.INVENTORY_EXPIRATION_INTERVAL_MS) || 60 * 1000;
 
+let expirationRunInProgress = false;
+
 async function releaseExpiredReservations() {
-  const client = await pool.connect();
+  if (expirationRunInProgress) {
+    return;
+  }
+
+  expirationRunInProgress = true;
+
+  let client;
 
   try {
+    client = await pool.connect();
+
     await client.query('BEGIN');
 
     const expiredReservations = await client.query(
@@ -33,7 +43,11 @@ async function releaseExpiredReservations() {
          WHERE id = $1`,
         [reservation.id]
       );
+    }
 
+    await client.query('COMMIT');
+
+    for (const reservation of expiredReservations.rows) {
       logger.info('Expired inventory reservation released', {
         reservationId: reservation.id,
         orderId: reservation.order_id,
@@ -42,21 +56,31 @@ async function releaseExpiredReservations() {
       });
     }
 
-    await client.query('COMMIT');
-
     if (expiredReservations.rows.length > 0) {
       logger.info('Expired reservations processed', {
         count: expiredReservations.rows.length,
       });
     }
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        logger.error('Failed to rollback expired reservation transaction', {
+          error: rollbackError.message,
+        });
+      }
+    }
 
     logger.error('Failed to release expired reservations', {
       error: error.message,
     });
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
+
+    expirationRunInProgress = false;
   }
 }
 
