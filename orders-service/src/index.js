@@ -1,3 +1,6 @@
+const { validateJwtConfig } = require('./config');
+validateJwtConfig();
+
 const app = require('./app');
 const { connectRabbitMQ } = require('./rabbitmq');
 const { startOutboxPoller } = require('./outboxPoller');

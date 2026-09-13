@@ -1,3 +1,6 @@
+const { validateJwtConfig } = require('./config');
+validateJwtConfig();
+
 const app = require('./app');
 const PORT = process.env.PORT || 4000;
 
