@@ -49,10 +49,21 @@ jobs:
               password_hash VARCHAR(255) NOT NULL,
               role VARCHAR(50) NOT NULL DEFAULT 'customer',
               created_at TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE refresh_tokens (
+              id SERIAL PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              token_hash VARCHAR(255) UNIQUE NOT NULL,
+              expires_at TIMESTAMP NOT NULL,
+              revoked_at TIMESTAMP NULL,
+              created_at TIMESTAMP DEFAULT NOW(),
+              replaced_by INTEGER REFERENCES refresh_tokens(id)
             );"
       - name: Verify schema was created correctly
         run: |
           PGPASSWORD=auth_pass psql -h localhost -U auth_user -d auth_db_test -c "\d users"
+          PGPASSWORD=auth_pass psql -h localhost -U auth_user -d auth_db_test -c "\d refresh_tokens"
 
       - name: Run tests
         working-directory: auth-service
