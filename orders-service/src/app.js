@@ -174,9 +174,22 @@ app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
         `UPDATE orders
          SET status = 'cancelled'
          WHERE id = $1
+           AND status = 'pending'
          RETURNING *`,
         [orderId]
       );
+
+      if (updateResult.rows.length === 0) {
+        logger.warn('Order cancellation lost race', {
+          orderId,
+          userId,
+          requestId: req.requestId,
+        });
+
+        return res.status(409).json({
+          error: 'Order cannot be cancelled because its status has changed',
+        });
+      }
 
       logger.info('Pending order cancelled successfully', {
         orderId,
