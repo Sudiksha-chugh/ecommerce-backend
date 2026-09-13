@@ -68,6 +68,13 @@ app.post('/login', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      logger.warn('Login failed: user not found', {
+        event: 'auth.login.failed',
+        reason: 'user_not_found',
+        email,
+        requestId: req.requestId,
+      });
+
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -75,6 +82,13 @@ app.post('/login', async (req, res) => {
     const passwordMatches = await bcrypt.compare(password, user.password_hash);
 
     if (!passwordMatches) {
+      logger.warn('Login failed: invalid password', {
+        event: 'auth.login.failed',
+        reason: 'invalid_password',
+        email,
+        requestId: req.requestId,
+      });
+
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -94,6 +108,7 @@ app.post('/login', async (req, res) => {
     );
 
     logger.info('User logged in', {
+      event: 'auth.login.success',
       userId: user.id,
       email: user.email,
       role: user.role,
@@ -130,6 +145,13 @@ app.post('/refresh', async (req, res) => {
 
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
+
+      logger.warn('Refresh failed: invalid token', {
+        event: 'auth.refresh.failed',
+        reason: 'invalid_token',
+        requestId: req.requestId,
+      });
+
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
 
@@ -137,11 +159,25 @@ app.post('/refresh', async (req, res) => {
 
     if (storedToken.revoked_at) {
       await client.query('ROLLBACK');
+
+      logger.warn('Refresh failed: revoked token reuse', {
+        event: 'auth.refresh.failed',
+        reason: 'revoked_token',
+        requestId: req.requestId,
+      });
+
       return res.status(401).json({ error: 'Refresh token has been revoked' });
     }
 
     if (new Date(storedToken.expires_at) <= new Date()) {
       await client.query('ROLLBACK');
+
+      logger.warn('Refresh failed: expired token', {
+        event: 'auth.refresh.failed',
+        reason: 'expired_token',
+        requestId: req.requestId,
+      });
+
       return res.status(401).json({ error: 'Refresh token has expired' });
     }
 
@@ -152,6 +188,13 @@ app.post('/refresh', async (req, res) => {
 
     if (userResult.rows.length === 0) {
       await client.query('ROLLBACK');
+
+      logger.warn('Refresh failed: user not found', {
+        event: 'auth.refresh.failed',
+        reason: 'user_not_found',
+        requestId: req.requestId,
+      });
+
       return res.status(401).json({ error: 'User not found' });
     }
 
@@ -181,6 +224,13 @@ app.post('/refresh', async (req, res) => {
 
     await client.query('COMMIT');
 
+    logger.info('Refresh token rotated', {
+      event: 'auth.refresh.success',
+      userId: user.id,
+      role: user.role,
+      requestId: req.requestId,
+    });
+
     res.status(200).json({
       token,
       refreshToken: newRefreshToken,
@@ -202,6 +252,55 @@ app.post('/refresh', async (req, res) => {
     res.status(500).json({ error: 'Something went wrong' });
   } finally {
     client.release();
+  }
+});
+
+app.post('/logout', async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    logger.warn('Logout failed: refresh token missing', {
+      event: 'auth.logout.failed',
+      reason: 'refresh_token_missing',
+      requestId: req.requestId,
+    });
+
+    return res.status(400).json({ error: 'Refresh token is required' });
+  }
+
+  const refreshTokenHash = hashRefreshToken(refreshToken);
+
+  try {
+    const result = await pool.query(
+      'UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL RETURNING user_id',
+      [refreshTokenHash]
+    );
+
+    if (result.rows.length === 0) {
+      logger.warn('Logout failed: invalid or already revoked token', {
+        event: 'auth.logout.failed',
+        reason: 'invalid_or_revoked_token',
+        requestId: req.requestId,
+      });
+
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    logger.info('User logged out', {
+      event: 'auth.logout.success',
+      userId: result.rows[0].user_id,
+      requestId: req.requestId,
+    });
+
+    res.status(200).json({ message: 'Logged out successfully' });
+  } catch (err) {
+    logger.error('Logout failed', {
+      event: 'auth.logout.error',
+      error: err.message,
+      requestId: req.requestId,
+    });
+
+    res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
