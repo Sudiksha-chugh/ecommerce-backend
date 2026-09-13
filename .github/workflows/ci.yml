@@ -38,7 +38,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: auth-service
-        run: npm install
+        run: npm ci
 
       - name: Create test database schema
         run: |
@@ -110,7 +110,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: catalog-service
-        run: npm install
+        run: npm ci
 
       - name: Create test database schema
         run: |
@@ -186,7 +186,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: cart-service
-        run: npm install
+        run: npm ci
 
       - name: Run tests
         working-directory: cart-service
@@ -240,7 +240,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: orders-service
-        run: npm install
+        run: npm ci
 
       - name: Create test database schema
         run: |
@@ -322,7 +322,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: payments-service
-        run: npm install
+        run: npm ci
 
       - name: Create test database schema
         run: |
@@ -374,7 +374,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: gateway
-        run: npm install
+        run: npm ci
 
       - name: Run tests
         working-directory: gateway
