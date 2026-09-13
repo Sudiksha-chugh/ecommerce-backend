@@ -360,11 +360,12 @@ async function startConsumer() {
       }
     });
   } catch (err) {
-    logger.error('Failed to start payments consumer', {
+    logger.error('Failed to start payments consumer, will retry', {
       error: err.message,
+      delayMs: RECONNECT_DELAY_MS,
     });
 
-    throw err;
+    setTimeout(startConsumer, RECONNECT_DELAY_MS);
   }
 }
 
