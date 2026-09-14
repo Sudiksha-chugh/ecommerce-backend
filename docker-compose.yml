@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: auth_pass
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
       POSTGRES_DB: auth_db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
@@ -27,7 +27,7 @@ services:
       DB_HOST: auth-db
       DB_PORT: 5432
       DB_USER: auth_user
-      DB_PASSWORD: auth_pass
+      DB_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
       DB_NAME: auth_db
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
@@ -43,7 +43,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: catalog_user
-      POSTGRES_PASSWORD: catalog_pass
+      POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD:?CATALOG_DB_PASSWORD is required}
       POSTGRES_DB: catalog_db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U catalog_user -d catalog_db"]
@@ -88,7 +88,7 @@ services:
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       DB_PORT: 5432
       DB_USER: catalog_user
-      DB_PASSWORD: catalog_pass
+      DB_PASSWORD: ${CATALOG_DB_PASSWORD:?CATALOG_DB_PASSWORD is required}
       DB_NAME: catalog_db
       ES_NODE: http://elasticsearch:9200
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
@@ -139,8 +139,8 @@ services:
     image: rabbitmq:3-management
     container_name: rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -155,7 +155,7 @@ services:
     container_name: orders-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD:?ORDERS_DB_PASSWORD is required}
       POSTGRES_DB: orders_db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d orders_db"]
@@ -178,9 +178,9 @@ services:
       DB_HOST: orders-db
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: postgres
+      DB_PASSWORD: ${ORDERS_DB_PASSWORD:?ORDERS_DB_PASSWORD is required}
       DB_NAME: orders_db
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL is required}
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
       PORT: 4003
@@ -196,7 +196,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${PAYMENTS_DB_PASSWORD:?PAYMENTS_DB_PASSWORD is required}
       POSTGRES_DB: payments_db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d payments_db"]
@@ -216,11 +216,11 @@ services:
       - "4004:4004"
     environment:
       ES_NODE: http://elasticsearch:9200
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL is required}
       DB_HOST: payments-db
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: postgres
+      DB_PASSWORD: ${PAYMENTS_DB_PASSWORD:?PAYMENTS_DB_PASSWORD is required}
       DB_NAME: payments_db
       PORT: 4004
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY}
