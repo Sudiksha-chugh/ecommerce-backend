@@ -24,7 +24,7 @@ describe('auth middleware', () => {
   it('rejects tokens signed with an unexpected algorithm with 401', async () => {
     const token = jwt.sign(
       { userId: 1, email: 'test@example.com' },
-      process.env.JWT_SECRET,
+      process.env.JWT_CURRENT_SECRET,
       { expiresIn: '1h', algorithm: 'HS384' }
     );
 
@@ -38,7 +38,7 @@ describe('auth middleware', () => {
   it('allows requests with a valid HS256 token and returns the user payload', async () => {
     const token = jwt.sign(
       { userId: 1, email: 'test@example.com' },
-      process.env.JWT_SECRET,
+      process.env.JWT_CURRENT_SECRET,
       { expiresIn: '1h', algorithm: 'HS256' }
     );
 

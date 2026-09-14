@@ -30,6 +30,23 @@ app.post('/products', authenticateToken, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Name and price are required' });
   }
 
+  if (
+    typeof price !== 'number' ||
+    !Number.isFinite(price) ||
+    price < 0
+  ) {
+    return res.status(400).json({ error: 'Price must be a non-negative number' });
+  }
+
+  if (
+    stock !== undefined &&
+    (!Number.isInteger(stock) || stock < 0)
+  ) {
+    return res.status(400).json({
+      error: 'Stock must be a non-negative integer',
+    });
+  }
+
   try {
     const dbResult = await pool.query(
       'INSERT INTO products (name, description, price, stock) VALUES ($1, $2, $3, $4) RETURNING *',

@@ -12,7 +12,7 @@ function makeToken(userId, role = 'admin') {
       email: `${userId}@example.com`,
       role,
     },
-    process.env.JWT_SECRET,
+    process.env.JWT_CURRENT_SECRET,
     { expiresIn: '1h', algorithm: 'HS256' }
   );
 }

@@ -8,7 +8,7 @@ const catalogClient = require('../src/catalogClient');
 require('dotenv').config();
 
 function makeToken(userId) {
-  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
+  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_CURRENT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
 }
 
 describe('POST /cart/items', () => {

@@ -74,7 +74,7 @@ jobs:
           DB_USER: auth_user
           DB_PASSWORD: auth_pass
           DB_NAME_TEST: auth_db_test
-          JWT_SECRET: test-secret-for-ci
+          JWT_CURRENT_SECRET: test-current-secret-32-characters-long
         run: npm test
 
   catalog-service:
@@ -166,7 +166,7 @@ jobs:
           DB_PASSWORD: catalog_pass
           DB_NAME_TEST: catalog_db_test
           ES_NODE: http://localhost:9200
-          JWT_SECRET: test-secret-for-ci
+          JWT_CURRENT_SECRET: test-current-secret-32-characters-long
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
         run: npm test
 
@@ -205,7 +205,7 @@ jobs:
           NODE_ENV: test
           REDIS_URL: redis://localhost:6379
           CATALOG_SERVICE_URL: http://localhost:4001
-          JWT_SECRET: test-secret-for-ci
+          JWT_CURRENT_SECRET: test-current-secret-32-characters-long
         run: npm test
 
   orders-service:
@@ -287,7 +287,7 @@ jobs:
           DB_PASSWORD: postgres
           DB_NAME_TEST: orders_db_test
           RABBITMQ_URL: amqp://guest:guest@localhost:5672
-          JWT_SECRET: test-secret-for-ci
+          JWT_CURRENT_SECRET: test-current-secret-32-characters-long
         run: npm test
 
   payments-service:

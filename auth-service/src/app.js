@@ -6,6 +6,7 @@ const authenticateToken = require('./middleware/auth');
 const logger = require('./logger');
 const requestIdMiddleware = require('./requestId');
 const crypto = require('crypto');
+const { getJwtSecrets } = require('./config');
 
 const REFRESH_TOKEN_BYTES = 32;
 
@@ -94,7 +95,7 @@ app.post('/login', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
+      getJwtSecrets().current,
       { expiresIn: '15m', algorithm: 'HS256' }
     );
 
@@ -202,7 +203,7 @@ app.post('/refresh', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
+      getJwtSecrets().current,
       { expiresIn: '15m', algorithm: 'HS256' }
     );
 
