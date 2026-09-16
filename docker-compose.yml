@@ -31,6 +31,8 @@ services:
       DB_NAME: auth_db
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
       PORT: 4000
       ES_NODE: http://elasticsearch:9200
     depends_on:
@@ -93,6 +95,8 @@ services:
       ES_NODE: http://elasticsearch:9200
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
       PORT: 4001
       RESERVATION_EXPIRATION_MINUTES: 15
       INVENTORY_EXPIRATION_INTERVAL_MS: 60000
@@ -244,6 +248,10 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:4001
       CART_SERVICE_URL: http://cart-service:4002
       ORDERS_SERVICE_URL: http://orders-service:4003
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
+      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:?AUTH0_CLIENT_ID is required}
+      AUTH0_CLIENT_SECRET: ${AUTH0_CLIENT_SECRET:?AUTH0_CLIENT_SECRET is required}
     depends_on:
       auth-service:
         condition: service_started

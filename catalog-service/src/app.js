@@ -19,25 +19,6 @@ const checkAuth0Token = require('./middleware/auth0');
 const requirePermission = require('./middleware/requirePermission');
 
 
-app.get('/auth0-test', checkAuth0Token, (req, res) => {
-  res.status(200).json({
-    message: 'Auth0 token is valid',
-    user: req.auth.payload,
-  });
-});
-
-app.get(
-  '/auth0-permission-test',
-  checkAuth0Token,
-  requirePermission('read:products'),
-  (req, res) => {
-    res.status(200).json({
-      message: 'Auth0 permission granted',
-      permission: 'read:products',
-    });
-  }
-);
-
 app.post(
   '/products',
   checkAuth0Token,
