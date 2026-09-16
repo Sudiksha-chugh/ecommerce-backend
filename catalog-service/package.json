@@ -17,6 +17,7 @@
     "@elastic/elasticsearch": "^8.19.2",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-oauth2-jwt-bearer": "^1.10.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.22.0",
     "winston": "^3.19.0",

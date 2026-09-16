@@ -1,27 +1,38 @@
+jest.mock('../src/middleware/auth0', () => {
+  return (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+      });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+
+    req.auth = {
+      payload: {
+        sub: 'test-user',
+        permissions: token === 'test-customer-token' ? ['read:products'] : ['read:products', 'write:products'],
+      },
+    };
+
+    next();
+  };
+});
+
 const request = require('supertest');
 const app = require('../src/app');
 const pool = require('../src/db');
 const esClient = require('../src/es');
-const jwt = require('jsonwebtoken');
+
 require('dotenv').config();
 
-function makeToken(userId, role = 'admin') {
-  return jwt.sign(
-    {
-      userId,
-      email: `${userId}@example.com`,
-      role,
-    },
-    process.env.JWT_CURRENT_SECRET,
-    { expiresIn: '1h', algorithm: 'HS256' }
-  );
-}
-
 const internalServiceKey = process.env.INTERNAL_SERVICE_KEY;
+const token = 'test-admin-token';
+const customerToken = 'test-customer-token';
 
 describe('POST /products', () => {
-  const token = makeToken(1);
-  const customerToken = makeToken(2, 'customer');
 
   afterEach(async () => {
     await pool.query('DELETE FROM products');
@@ -153,7 +164,6 @@ describe('POST /products', () => {
 });
 
 describe('GET /products/:id', () => {
-  const token = makeToken(1);
   let productId;
 
   beforeEach(async () => {
@@ -239,7 +249,8 @@ describe('GET /products/search', () => {
 
     const res = await request(app)
       .get('/products/search')
-      .query({ q: 'Wireless Headphones' });
+      .query({ q: 'Wireless Headphones' })
+      .set('Authorization', 'Bearer ' + token);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.length).toBeGreaterThan(0);
@@ -276,7 +287,8 @@ describe('GET /products/search', () => {
 
     const res = await request(app)
       .get('/products/search')
-      .query({ q: 'Wireles Headpones' });
+      .query({ q: 'Wireles Headpones' })
+      .set('Authorization', 'Bearer ' + token);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.length).toBeGreaterThan(0);
@@ -285,7 +297,6 @@ describe('GET /products/search', () => {
 });
 
 describe('POST /products/decrement-stock', () => {
-  const token = makeToken(1);
 
   let productId;
 
@@ -449,7 +460,6 @@ describe('POST /products/decrement-stock', () => {
 });
 
 describe('POST /products/restore-stock', () => {
-  const token = makeToken(1);
 
   let productId;
 

@@ -15,95 +15,122 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-const authenticateToken = require('./middleware/auth');
+const checkAuth0Token = require('./middleware/auth0');
+const requirePermission = require('./middleware/requirePermission');
 
-function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  next();
-}
-app.post('/products', authenticateToken, requireAdmin, async (req, res) => {
-  const { name, description, price, stock } = req.body;
 
-  if (!name || price === undefined) {
-    return res.status(400).json({ error: 'Name and price are required' });
-  }
-
-  if (
-    typeof price !== 'number' ||
-    !Number.isFinite(price) ||
-    price < 0
-  ) {
-    return res.status(400).json({ error: 'Price must be a non-negative number' });
-  }
-
-  if (
-    stock !== undefined &&
-    (!Number.isInteger(stock) || stock < 0)
-  ) {
-    return res.status(400).json({
-      error: 'Stock must be a non-negative integer',
-    });
-  }
-
-  try {
-    const dbResult = await pool.query(
-      'INSERT INTO products (name, description, price, stock) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, description || null, price, stock || 0]
-    );
-
-    const product = dbResult.rows[0];
-
-    await esClient.index({
-      index: PRODUCTS_INDEX,
-      id: String(product.id),
-      document: {
-        name: product.name,
-        description: product.description,
-        price: product.price,
-        stock: product.stock,
-      },
-      refresh: true,
-    });
-    logger.info('Product created', { productId: product.id, name: product.name, createdBy: req.user.userId, requestId: req.requestId });
-    res.status(201).json(product);
-  } catch (err) {
-    logger.error('Product creation failed', { error: err.message, name, requestId: req.requestId });
-    res.status(500).json({ error: 'Something went wrong' });
-  }
+app.get('/auth0-test', checkAuth0Token, (req, res) => {
+  res.status(200).json({
+    message: 'Auth0 token is valid',
+    user: req.auth.payload,
+  });
 });
-app.get('/products/search', async (req, res) => {
-  const { q } = req.query;
 
-  if (!q) {
-    return res.status(400).json({ error: 'Query parameter "q" is required' });
+app.get(
+  '/auth0-permission-test',
+  checkAuth0Token,
+  requirePermission('read:products'),
+  (req, res) => {
+    res.status(200).json({
+      message: 'Auth0 permission granted',
+      permission: 'read:products',
+    });
   }
+);
 
-  try {
-    const result = await esClient.search({
-      index: PRODUCTS_INDEX,
-      query: {
-        multi_match: {
-          query: q,
-          fields: ['name', 'description'],
-          fuzziness: 'AUTO',
+app.post(
+  '/products',
+  checkAuth0Token,
+  requirePermission('write:products'),
+  async (req, res) => {
+    const { name, description, price, stock } = req.body;
+
+    if (!name || price === undefined) {
+      return res.status(400).json({ error: 'Name and price are required' });
+    }
+
+    if (
+      typeof price !== 'number' ||
+      !Number.isFinite(price) ||
+      price < 0
+    ) {
+      return res.status(400).json({ error: 'Price must be a non-negative number' });
+    }
+
+    if (
+      stock !== undefined &&
+      (!Number.isInteger(stock) || stock < 0)
+    ) {
+      return res.status(400).json({
+        error: 'Stock must be a non-negative integer',
+      });
+    }
+
+    try {
+      const dbResult = await pool.query(
+        'INSERT INTO products (name, description, price, stock) VALUES ($1, $2, $3, $4) RETURNING *',
+        [name, description || null, price, stock || 0]
+      );
+
+      const product = dbResult.rows[0];
+
+      await esClient.index({
+        index: PRODUCTS_INDEX,
+        id: String(product.id),
+        document: {
+          name: product.name,
+          description: product.description,
+          price: product.price,
+          stock: product.stock,
         },
-      },
-    });
-
-    const products = result.hits.hits.map((hit) => ({
-      id: hit._id,
-      score: hit._score,
-      ...hit._source,
-    }));
-    res.status(200).json(products);
-  } catch (err) {
-    logger.error('Product search failed', { error: err.message, query: q, requestId: req.requestId });
-    res.status(500).json({ error: 'Something went wrong' });
-  }
+        refresh: true,
+      });
+      logger.info('Product created', { productId: product.id, name, createdBy: req.auth.payload.sub, requestId: req.requestId });
+      res.status(201).json(product);
+    } catch (err) {
+      logger.error('Product creation failed', { error: err.message, name, requestId: req.requestId });
+      res.status(500).json({ error: 'Something went wrong' });
+    }
 });
-app.get('/products/:id', async (req, res) => {
+app.get(
+  '/products/search',
+  checkAuth0Token,
+  requirePermission('read:products'),
+  async (req, res) => {
+    const { q } = req.query;
+
+    if (!q) {
+      return res.status(400).json({ error: 'Query parameter "q" is required' });
+    }
+
+    try {
+      const result = await esClient.search({
+        index: PRODUCTS_INDEX,
+        query: {
+          multi_match: {
+            query: q,
+            fields: ['name', 'description'],
+            fuzziness: 'AUTO',
+          },
+        },
+      });
+
+      const products = result.hits.hits.map((hit) => ({
+        id: hit._id,
+        score: hit._score,
+        ...hit._source,
+      }));
+      res.status(200).json(products);
+    } catch (err) {
+      logger.error('Product search failed', { error: err.message, query: q, requestId: req.requestId });
+      res.status(500).json({ error: 'Something went wrong' });
+    }
+  });
+app.get(
+  '/products/:id',
+  checkAuth0Token,
+  requirePermission('read:products'),
+  async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM products WHERE id = $1', [req.params.id]);
 
