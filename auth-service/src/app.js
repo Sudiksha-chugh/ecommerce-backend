@@ -3,6 +3,8 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
 const authenticateToken = require('./middleware/auth');
+const checkAuth0Token = require('./middleware/auth0');
+const requirePermission = require('./middleware/requirePermission');
 const logger = require('./logger');
 const requestIdMiddleware = require('./requestId');
 const crypto = require('crypto');
@@ -303,6 +305,14 @@ app.post('/logout', async (req, res) => {
 
     res.status(500).json({ error: 'Something went wrong' });
   }
+});
+
+
+app.get('/auth0-test', checkAuth0Token, (req, res) => {
+  res.status(200).json({
+    message: 'Auth0 token is valid',
+    user: req.auth.payload,
+  });
 });
 
 app.get('/me', authenticateToken, (req, res) => {
