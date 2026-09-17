@@ -1101,7 +1101,7 @@ AUTH_SERVICE_URL=http://auth-service:4000
 
 CATALOG_SERVICE_URL=http://catalog-service:4001
 
-RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+RABBITMQ_URL=amqp://<RABBITMQ_USER>:<RABBITMQ_PASSWORD>@rabbitmq:5672
 
 REDIS_URL=redis://redis:6379
 ```

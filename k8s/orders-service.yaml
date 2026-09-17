@@ -27,7 +27,10 @@ spec:
             - name: DB_PORT
               value: "5432"
             - name: RABBITMQ_URL
-              value: amqp://guest:guest@rabbitmq:5672
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: url
             - name: PORT
               value: "4003"
 
