@@ -54,6 +54,7 @@ async function pollOnce() {
     }
   } finally {
     client.release();
+    isPolling = false;
   }
 }
 

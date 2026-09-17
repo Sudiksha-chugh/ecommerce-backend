@@ -29,6 +29,7 @@ services:
       DB_USER: auth_user
       DB_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
       DB_NAME: auth_db
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
@@ -188,6 +189,10 @@ services:
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
       PORT: 4003
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
     depends_on:
       orders-db:
         condition: service_healthy

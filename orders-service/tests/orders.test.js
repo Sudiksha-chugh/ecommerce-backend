@@ -1,5 +1,42 @@
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+
+jest.mock('../src/middleware/auth0User', () => {
+  const jsonwebtoken = require('jsonwebtoken');
+
+  return (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+      });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+      const decoded = jsonwebtoken.verify(
+        token,
+        process.env.JWT_CURRENT_SECRET
+      );
+
+      req.user = {
+        userId: decoded.userId,
+        email: decoded.email,
+        role: 'customer',
+        auth0Sub: `test|${decoded.userId}`,
+      };
+
+      next();
+    } catch (err) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+      });
+    }
+  };
+});
+
 const app = require('../src/app');
 const pool = require('../src/db');
 require('dotenv').config();

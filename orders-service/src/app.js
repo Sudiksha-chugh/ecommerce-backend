@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('./db');
-const authenticateToken = require('./middleware/auth');
+const authenticateAuth0User = require('./middleware/auth0User');
 const logger = require('./logger');
 require('dotenv').config();
 const requestIdMiddleware = require('./requestId');
@@ -16,7 +16,7 @@ app.get('/health', (req, res) => {
 });
 
 // Create order
-app.post('/orders', authenticateToken, async (req, res) => {
+app.post('/orders', authenticateAuth0User, async (req, res) => {
   const userId = req.user.userId;
   const { items, totalAmount } = req.body;
   const idempotencyKey = req.headers['idempotency-key'] || null;
@@ -127,7 +127,7 @@ app.post('/orders', authenticateToken, async (req, res) => {
 });
 
 // Cancel order
-app.patch('/orders/:id/cancel', authenticateToken, async (req, res) => {
+app.patch('/orders/:id/cancel', authenticateAuth0User, async (req, res) => {
   const orderId = req.params.id;
   const userId = req.user.userId;
 

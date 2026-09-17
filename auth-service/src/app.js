@@ -5,6 +5,7 @@ const pool = require('./db');
 const authenticateToken = require('./middleware/auth');
 const checkAuth0Token = require('./middleware/auth0');
 const requirePermission = require('./middleware/requirePermission');
+const authenticateInternalService = require('./middleware/internalAuth');
 const logger = require('./logger');
 const requestIdMiddleware = require('./requestId');
 const crypto = require('crypto');
@@ -307,6 +308,43 @@ app.post('/logout', async (req, res) => {
   }
 });
 
+app.get(
+  '/internal/users/by-auth0-sub',
+  authenticateInternalService,
+  async (req, res) => {
+    const { sub } = req.query;
+
+    if (!sub) {
+      return res.status(400).json({
+        error: 'Auth0 subject is required',
+      });
+    }
+
+    try {
+      const result = await pool.query(
+        'SELECT id, email, role FROM users WHERE auth0_sub = $1',
+        [sub]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          error: 'User identity not mapped',
+        });
+      }
+
+      res.status(200).json(result.rows[0]);
+    } catch (err) {
+      logger.error('Auth0 identity lookup failed', {
+        error: err.message,
+        requestId: req.requestId,
+      });
+
+      res.status(500).json({
+        error: 'Something went wrong',
+      });
+    }
+  }
+);
 
 app.get('/auth0-test', checkAuth0Token, (req, res) => {
   res.status(200).json({
