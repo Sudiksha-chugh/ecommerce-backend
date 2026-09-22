@@ -1089,10 +1089,34 @@ DB_PASSWORD=auth_pass
 DB_NAME=auth_db
 DB_NAME_TEST=auth_db_test
 
-JWT_SECRET=your-secret-key
+JWT_CURRENT_SECRET=your-current-secret-at-least-32-characters
+JWT_PREVIOUS_SECRET=your-previous-secret-at-least-32-characters
 ```
 
-The JWT secret must be consistent across services that independently verify tokens.
+`JWT_CURRENT_SECRET` is used for newly issued JWTs. `JWT_PREVIOUS_SECRET` is optional and allows tokens signed with the previous secret to remain valid during a secret-rotation window.
+
+When rotating the JWT secret, move the existing current secret to `JWT_PREVIOUS_SECRET` and generate a new value for `JWT_CURRENT_SECRET`. The current and previous secrets must be different and each must be at least 32 characters long.
+
+Services that independently verify JWTs must receive the same current/previous secret pair during the rotation window.
+
+### JWT Secret Rotation
+
+1. Generate a new random value for `JWT_CURRENT_SECRET`.
+2. Move the existing `JWT_CURRENT_SECRET` value to `JWT_PREVIOUS_SECRET`.
+3. Set the new value as `JWT_CURRENT_SECRET`.
+4. Update the secret configuration for every service that independently verifies JWTs:
+   * `auth-service`
+   * `catalog-service`
+   * `cart-service`
+   * `orders-service`
+5. Restart or roll out those services so they load the new secret pair.
+6. Verify that:
+   * newly issued JWTs use the new current secret;
+   * JWTs signed with the previous secret remain valid during the rotation window;
+   * JWTs signed with an unrelated secret are rejected.
+7. After the rotation window has ended and old tokens are no longer expected to be valid, remove `JWT_PREVIOUS_SECRET` and restart/roll out the affected services.
+
+Never commit JWT secrets, `.env` files, Kubernetes secret manifests containing real values, or other credential material to Git.
 
 Docker Compose uses service DNS names for internal communication:
 

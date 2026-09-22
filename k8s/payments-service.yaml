@@ -12,10 +12,23 @@ spec:
       labels:
         app: payments-service
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: payments-service
-          image: sudikshachugh/payments-service:local
+          image: docker.io/sudikshachugh/payments-service:nonroot-v1
           imagePullPolicy: IfNotPresent
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
 
           env:
             - name: DB_HOST
@@ -41,7 +54,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: rabbitmq-secret
-                  key: url
+                  key: payments-url
             - name: PORT
               value: "4004"
             - name: CATALOG_SERVICE_URL

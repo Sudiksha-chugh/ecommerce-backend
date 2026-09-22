@@ -22,7 +22,7 @@ function hashRefreshToken(token) {
 }
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(requestIdMiddleware);
 
 app.get('/health', (req, res) => {
@@ -345,13 +345,6 @@ app.get(
     }
   }
 );
-
-app.get('/auth0-test', checkAuth0Token, (req, res) => {
-  res.status(200).json({
-    message: 'Auth0 token is valid',
-    user: req.auth.payload,
-  });
-});
 
 app.get('/me', authenticateToken, (req, res) => {
   res.status(200).json(req.user);

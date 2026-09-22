@@ -17,8 +17,7 @@ describe('payments outbox poller', () => {
 
   beforeEach(async () => {
     mockChannel = {
-      assertQueue: jest.fn().mockResolvedValue(),
-      sendToQueue: jest.fn(),
+      publish: jest.fn(),
       waitForConfirms: jest.fn().mockResolvedValue(),
     };
 
@@ -53,12 +52,8 @@ describe('payments outbox poller', () => {
 
     await pollOnce();
 
-    expect(mockChannel.assertQueue).toHaveBeenCalledWith(
-      'payment_processed',
-      { durable: true }
-    );
-
-    expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+    expect(mockChannel.publish).toHaveBeenCalledWith(
+      'app.events',
       'payment_processed',
       expect.any(Buffer),
       { persistent: true }
@@ -127,7 +122,12 @@ describe('payments outbox poller', () => {
 
     expect(connectRabbitMQ).toHaveBeenCalled();
 
-    expect(mockChannel.sendToQueue).toHaveBeenCalled();
+    expect(mockChannel.publish).toHaveBeenCalledWith(
+      'app.events',
+      'payment_processed',
+      expect.any(Buffer),
+      { persistent: true }
+    );
     expect(mockChannel.waitForConfirms).toHaveBeenCalled();
   });
 });

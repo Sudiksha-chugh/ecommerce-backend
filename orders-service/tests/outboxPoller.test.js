@@ -23,12 +23,11 @@ describe('pollOnce', () => {
   });
 
   it('publishes unpublished events and marks them published', async () => {
-    const mockSendToQueue = jest.fn();
+    const mockPublish = jest.fn();
     const mockWaitForConfirms = jest.fn().mockResolvedValue();
 
     getChannel.mockReturnValue({
-      assertQueue: jest.fn().mockResolvedValue(),
-      sendToQueue: mockSendToQueue,
+      publish: mockPublish,
       waitForConfirms: mockWaitForConfirms,
     });
 
@@ -36,7 +35,8 @@ describe('pollOnce', () => {
 
     await pollOnce();
 
-    expect(mockSendToQueue).toHaveBeenCalledWith(
+    expect(mockPublish).toHaveBeenCalledWith(
+      'app.events',
       'order_placed',
       expect.any(Buffer),
       { persistent: true }
@@ -85,10 +85,9 @@ describe('pollOnce', () => {
   expect(check.rows[0].published_at).toBeNull();
 });
 
-  it('leaves an event unpublished if sendToQueue throws, without crashing the poller', async () => {
+  it('leaves an event unpublished if publish throws, without crashing the poller', async () => {
     getChannel.mockReturnValue({
-      assertQueue: jest.fn().mockResolvedValue(),
-      sendToQueue: jest.fn(() => {
+      publish: jest.fn(() => {
         throw new Error('Simulated channel failure');
       }),
       waitForConfirms: jest.fn().mockResolvedValue(),
@@ -104,8 +103,8 @@ describe('pollOnce', () => {
 
   it('does nothing when there are no unpublished events', async () => {
     getChannel.mockReturnValue({
-      assertQueue: jest.fn().mockResolvedValue(),
-      sendToQueue: jest.fn(),
+      publish: jest.fn(),
+      waitForConfirms: jest.fn().mockResolvedValue(),
     });
 
     await expect(pollOnce()).resolves.not.toThrow();

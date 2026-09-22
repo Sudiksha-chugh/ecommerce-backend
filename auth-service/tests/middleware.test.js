@@ -4,6 +4,8 @@ const pool = require('../src/db');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
+process.env.INTERNAL_SERVICE_KEY = 'test-internal-service-key-123456789';
+
 describe('auth middleware', () => {
   afterAll(async () => {
     await pool.end();
@@ -48,5 +50,33 @@ describe('auth middleware', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.email).toBe('test@example.com');
+  });
+
+  it('rejects internal requests with no service key with 401', async () => {
+    const res = await request(app)
+      .get('/internal/users/by-auth0-sub')
+      .query({ sub: 'auth0|test-user' });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.error).toBe('Invalid internal service credentials');
+  });
+
+  it('rejects internal requests with an invalid service key with 401', async () => {
+    const res = await request(app)
+      .get('/internal/users/by-auth0-sub')
+      .query({ sub: 'auth0|test-user' })
+      .set('x-internal-service-key', 'incorrect-internal-key');
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.error).toBe('Invalid internal service credentials');
+  });
+
+  it('allows internal requests with the valid service key', async () => {
+    const res = await request(app)
+      .get('/internal/users/by-auth0-sub')
+      .query({ sub: 'auth0|test-user' })
+      .set('x-internal-service-key', process.env.INTERNAL_SERVICE_KEY);
+
+    expect([200, 404]).toContain(res.statusCode);
   });
 });

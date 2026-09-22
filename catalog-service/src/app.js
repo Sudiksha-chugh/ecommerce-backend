@@ -7,7 +7,7 @@ const requestIdMiddleware = require('./requestId');
 
 const app = express();
 app.use(requestIdMiddleware);
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 const PRODUCTS_INDEX = process.env.NODE_ENV === 'test' ? 'products_test' : 'products';
 

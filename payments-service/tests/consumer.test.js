@@ -243,19 +243,6 @@ describe('startConsumer', () => {
     beforeEach(async () => {
       await pool.query('DELETE FROM payments');
       await pool.query('DELETE FROM outbox_events');
-
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS refunds (
-          id SERIAL PRIMARY KEY,
-          order_id INTEGER NOT NULL UNIQUE,
-          user_id INTEGER NOT NULL,
-          amount NUMERIC(10,2) NOT NULL,
-          status VARCHAR(50) NOT NULL,
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-
       await pool.query('DELETE FROM refunds');
     });
 

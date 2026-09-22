@@ -17,7 +17,9 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
     "http-proxy-middleware": "^3.0.7",
+    "qs": "^6.16.0",
     "winston": "^3.19.0",
     "winston-elasticsearch": "^0.19.0"
   },

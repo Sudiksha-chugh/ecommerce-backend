@@ -1,4 +1,5 @@
 const express = require('express');
+const helmet = require('helmet');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const rateLimit = require('express-rate-limit');
 const logger = require('./logger');
@@ -9,6 +10,7 @@ require('dotenv').config();
 
 const app = express();
 
+app.use(helmet());
 app.use(requestIdMiddleware);
 
 const generalLimiter = rateLimit({
@@ -44,7 +46,7 @@ app.get('/login', (req, res) => {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: process.env.AUTH0_CLIENT_ID,
-    redirect_uri: 'http://localhost:8080/callback',
+    redirect_uri: process.env.AUTH0_CALLBACK_URL,
     scope: 'openid profile email offline_access',
     audience: process.env.AUTH0_AUDIENCE,
     state,
@@ -80,7 +82,7 @@ app.get('/callback', async (req, res) => {
           client_id: process.env.AUTH0_CLIENT_ID,
           client_secret: process.env.AUTH0_CLIENT_SECRET,
           code,
-          redirect_uri: 'http://localhost:8080/callback',
+          redirect_uri: process.env.AUTH0_CALLBACK_URL,
         }),
       }
     );

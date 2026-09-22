@@ -12,22 +12,55 @@ spec:
       labels:
         app: cart-service
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: cart-service
-          image: sudikshachugh/cart-service:local
+          image: docker.io/sudikshachugh/cart-service:nonroot-v1
           imagePullPolicy: IfNotPresent
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
 
           envFrom:
             - secretRef:
                 name: cart-service-secret
 
           env:
+            - name: AUTH0_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: cart-service-secret
+                  key: AUTH0_DOMAIN
+
+            - name: AUTH0_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: cart-service-secret
+                  key: AUTH0_AUDIENCE
+
+            - name: AUTH_SERVICE_URL
+              value: http://auth-service:4000
+
             - name: REDIS_URL
               value: redis://redis:6379
             - name: CATALOG_SERVICE_URL
               value: http://catalog-service:4001
             - name: PORT
               value: "4002"
+            - name: INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: internal-service-secret
+                  key: INTERNAL_SERVICE_KEY
 
           ports:
             - containerPort: 4002

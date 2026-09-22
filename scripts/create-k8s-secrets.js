@@ -87,13 +87,27 @@ async function main() {
   );
   console.log();
 
-  let jwtSecret = await ask(
-    'JWT secret (press Enter to generate one): ',
+  let jwtCurrentSecret = await ask(
+    'JWT current secret (press Enter to generate one): ',
     true
   );
 
-  if (!jwtSecret) {
-    jwtSecret = crypto.randomBytes(48).toString('base64url');
+  if (!jwtCurrentSecret) {
+    jwtCurrentSecret = crypto.randomBytes(48).toString('base64url');
+  }
+
+  const jwtPreviousSecret = await ask(
+    'JWT previous secret (press Enter if none): ',
+    true
+  );
+
+  if (
+    jwtPreviousSecret &&
+    jwtPreviousSecret === jwtCurrentSecret
+  ) {
+    throw new Error(
+      'JWT previous secret must be different from JWT current secret.'
+    );
   }
 
   let internalServiceKey = await ask(
@@ -133,7 +147,8 @@ async function main() {
   });
 
   applySecret('auth-service-secret', {
-    JWT_SECRET: jwtSecret,
+    JWT_CURRENT_SECRET: jwtCurrentSecret,
+    JWT_PREVIOUS_SECRET: jwtPreviousSecret,
     DB_USER: 'auth_user',
     DB_PASSWORD: authDbPassword,
     DB_NAME: 'auth_db',
@@ -146,14 +161,16 @@ async function main() {
   });
 
   applySecret('catalog-service-secret', {
-    JWT_SECRET: jwtSecret,
+    JWT_CURRENT_SECRET: jwtCurrentSecret,
+    JWT_PREVIOUS_SECRET: jwtPreviousSecret,
     DB_USER: 'catalog_user',
     DB_PASSWORD: catalogDbPassword,
     DB_NAME: 'catalog_db',
   });
 
   applySecret('cart-service-secret', {
-    JWT_SECRET: jwtSecret,
+    JWT_CURRENT_SECRET: jwtCurrentSecret,
+    JWT_PREVIOUS_SECRET: jwtPreviousSecret,
   });
 
   applySecret('orders-db-secret', {
@@ -163,10 +180,8 @@ async function main() {
   });
 
   applySecret('orders-service-secret', {
-    JWT_SECRET: jwtSecret,
-    DB_USER: 'postgres',
-    DB_PASSWORD: ordersDbPassword,
-    DB_NAME: 'orders_db',
+    JWT_CURRENT_SECRET: jwtCurrentSecret,
+    JWT_PREVIOUS_SECRET: jwtPreviousSecret,
   });
 
   applySecret('payments-db-secret', {

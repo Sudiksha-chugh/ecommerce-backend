@@ -8,7 +8,7 @@ const requestIdMiddleware = require('./requestId');
 const app = express();
 app.use(requestIdMiddleware);
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -111,7 +111,6 @@ app.post('/orders', authenticateAuth0User, async (req, res) => {
 
     logger.error('Order creation failed', {
       error: err.message,
-      stack: err.stack,
       userId,
       requestId: req.requestId,
     });
@@ -281,7 +280,6 @@ app.patch('/orders/:id/cancel', authenticateAuth0User, async (req, res) => {
 
     logger.error('Failed to cancel order', {
       error: err.message,
-      stack: err.stack,
       orderId,
       userId,
       requestId: req.requestId,

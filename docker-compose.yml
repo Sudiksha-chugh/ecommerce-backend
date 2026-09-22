@@ -182,10 +182,9 @@ services:
       ES_NODE: http://elasticsearch:9200
       DB_HOST: orders-db
       DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: ${ORDERS_DB_PASSWORD:?ORDERS_DB_PASSWORD is required}
+      DB_USER: orders_app
+      DB_PASSWORD: ${ORDERS_APP_DB_PASSWORD:?ORDERS_APP_DB_PASSWORD is required}
       DB_NAME: orders_db
-      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL is required}
       JWT_CURRENT_SECRET: ${JWT_CURRENT_SECRET:?JWT_CURRENT_SECRET is required}
       JWT_PREVIOUS_SECRET: ${JWT_PREVIOUS_SECRET:-}
       PORT: 4003
@@ -193,6 +192,7 @@ services:
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:?AUTH0_DOMAIN is required}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required}
+      RABBITMQ_URL: ${ORDERS_RABBITMQ_URL:?ORDERS_RABBITMQ_URL is required}
     depends_on:
       orders-db:
         condition: service_healthy
@@ -225,15 +225,15 @@ services:
       - "4004:4004"
     environment:
       ES_NODE: http://elasticsearch:9200
-      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL is required}
       DB_HOST: payments-db
       DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: ${PAYMENTS_DB_PASSWORD:?PAYMENTS_DB_PASSWORD is required}
+      DB_USER: payments_app
+      DB_PASSWORD: ${PAYMENTS_APP_DB_PASSWORD:?PAYMENTS_APP_DB_PASSWORD is required}
       DB_NAME: payments_db
       PORT: 4004
-      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY}
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       CATALOG_SERVICE_URL: http://catalog-service:4001
+      RABBITMQ_URL: ${PAYMENTS_RABBITMQ_URL:?PAYMENTS_RABBITMQ_URL is required}
     depends_on:
       rabbitmq:
         condition: service_healthy

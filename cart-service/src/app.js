@@ -1,19 +1,19 @@
 const express = require('express');
 const { client } = require('./redisClient');
 const catalogClient = require('./catalogClient');
-const authenticateToken = require('./middleware/auth');
+const authenticateAuth0User = require('./middleware/auth0User');
 const logger = require('./logger');
 const requestIdMiddleware = require('./requestId');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(requestIdMiddleware);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.post('/cart/items', authenticateToken, async (req, res) => {
+app.post('/cart/items', authenticateAuth0User, async (req, res) => {
   const userId = req.user.userId;
   const { productId, quantity } = req.body;
 
@@ -23,7 +23,7 @@ app.post('/cart/items', authenticateToken, async (req, res) => {
 
   let product;
   try {
-    product = await catalogClient.getProduct(productId, req.requestId);
+    product = await catalogClient.getProduct(productId, req.requestId, req.headers.authorization);
   } catch (err) {
         if (err.response && err.response.status === 404) {
       return res.status(404).json({ error: 'Product not found' });
@@ -58,7 +58,7 @@ app.post('/cart/items', authenticateToken, async (req, res) => {
   res.status(201).json(cart);
 });
 
-app.get('/cart', authenticateToken, async (req, res) => {
+app.get('/cart', authenticateAuth0User, async (req, res) => {
   const userId = req.user.userId;
   const cartKey = `cart:${userId}`;
 

@@ -1,4 +1,2 @@
-process.env.JWT_CURRENT_SECRET =
-  'test-current-secret-32-characters-long';
-process.env.JWT_PREVIOUS_SECRET =
-  'test-previous-secret-32-characters-long';
+process.env.AUTH0_AUDIENCE = 'https://test-api.example.com';
+process.env.AUTH0_DOMAIN = 'test-tenant.example.com';

@@ -176,6 +176,61 @@ describe('POST /login', () => {
     expect(decoded.role).toBe('customer');
   });
 
+  it('accepts a JWT signed with the previous secret during rotation', async () => {
+    const previousSecret = process.env.JWT_PREVIOUS_SECRET;
+
+    const token = jwt.sign(
+      {
+        userId: 123,
+        email: 'previous-secret@example.com',
+        role: 'customer',
+      },
+      previousSecret,
+      {
+        expiresIn: '15m',
+        algorithm: 'HS256',
+      }
+    );
+
+    const res = await request(app)
+      .get('/me')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        userId: 123,
+        email: 'previous-secret@example.com',
+        role: 'customer',
+      })
+    );
+  });
+
+  it('rejects a JWT signed with an unrelated secret', async () => {
+    const invalidSecret = 'this-is-an-unrelated-invalid-secret-32-chars';
+
+    const token = jwt.sign(
+      {
+        userId: 123,
+        email: 'invalid-secret@example.com',
+        role: 'customer',
+      },
+      invalidSecret,
+      {
+        expiresIn: '15m',
+        algorithm: 'HS256',
+      }
+    );
+
+    const res = await request(app)
+      .get('/me')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({
+      error: 'Invalid or expired token',
+    });
+  });
   it('refreshes a valid refresh token and returns new tokens', async () => {
     const loginRes = await request(app)
       .post('/login')

@@ -12,9 +12,20 @@ spec:
       labels:
         app: auth-service
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: auth-service
-          image: sudikshachugh/auth-service:local
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          image: docker.io/sudikshachugh/auth-service:nonroot-v1
           imagePullPolicy: IfNotPresent
 
           envFrom:
@@ -28,6 +39,12 @@ spec:
               value: "5432"
             - name: PORT
               value: "4000"
+
+            - name: INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: internal-service-secret
+                  key: INTERNAL_SERVICE_KEY
 
           ports:
             - containerPort: 4000

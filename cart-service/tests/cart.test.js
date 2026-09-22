@@ -1,19 +1,29 @@
 jest.mock('../src/catalogClient');
 
+jest.mock('../src/middleware/auth0User', () => {
+  return (req, res, next) => {
+    if (!req.headers.authorization) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    req.user = {
+      userId: 'user1',
+      email: 'user1@example.com',
+      role: 'customer',
+      auth0Sub: 'auth0|test-user1',
+    };
+
+    next();
+  };
+});
+
 const request = require('supertest');
-const jwt = require('jsonwebtoken');
 const app = require('../src/app');
 const { client, connectRedis } = require('../src/redisClient');
 const catalogClient = require('../src/catalogClient');
 require('dotenv').config();
 
-function makeToken(userId) {
-  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_CURRENT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
-}
-
 describe('POST /cart/items', () => {
-  const token = makeToken('user1');
-
   afterEach(async () => {
     await client.del('cart:user1');
     jest.clearAllMocks();
@@ -37,11 +47,16 @@ describe('POST /cart/items', () => {
 
     const res = await request(app)
       .post('/cart/items')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', 'Bearer test-token')
       .send({ productId: 1, quantity: 2 });
 
     expect(res.statusCode).toBe(201);
     expect(res.body.items[0].name).toBe('Wireless Headphones');
+    expect(catalogClient.getProduct).toHaveBeenCalledWith(
+      1,
+      null,
+      'Bearer test-token'
+    );
   });
 
   it('returns 404 if the product does not exist in catalog-service', async () => {
@@ -49,7 +64,7 @@ describe('POST /cart/items', () => {
 
     const res = await request(app)
       .post('/cart/items')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', 'Bearer test-token')
       .send({ productId: 999, quantity: 1 });
 
     expect(res.statusCode).toBe(404);
@@ -60,7 +75,7 @@ describe('POST /cart/items', () => {
 
     const res = await request(app)
       .post('/cart/items')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', 'Bearer test-token')
       .send({ productId: 1, quantity: 1 });
 
     expect(res.statusCode).toBe(503);
@@ -68,10 +83,8 @@ describe('POST /cart/items', () => {
 });
 
 describe('GET /cart', () => {
-  const token = makeToken('user2');
-
   afterEach(async () => {
-    await client.del('cart:user2');
+    await client.del('cart:user1');
   });
 
   it('rejects requests with no token with 401', async () => {
@@ -82,18 +95,18 @@ describe('GET /cart', () => {
   it('returns an empty cart for a user with no items', async () => {
     const res = await request(app)
       .get('/cart')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', 'Bearer test-token');
 
     expect(res.statusCode).toBe(200);
     expect(res.body.items).toEqual([]);
   });
 
   it('returns the existing cart for a user with items', async () => {
-    await client.set('cart:user2', JSON.stringify({ items: [{ productId: 1, name: 'Test', price: '10.00', quantity: 1 }] }));
+    await client.set('cart:user1', JSON.stringify({ items: [{ productId: 1, name: 'Test', price: '10.00', quantity: 1 }] }));
 
     const res = await request(app)
       .get('/cart')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', 'Bearer test-token');
 
     expect(res.statusCode).toBe(200);
     expect(res.body.items.length).toBe(1);

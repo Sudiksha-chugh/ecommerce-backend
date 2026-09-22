@@ -33,14 +33,12 @@ async function pollOnce() {
 
     for (const event of result.rows) {
       try {
-        await channel.assertQueue(event.event_type, { durable: true });
-
-        channel.sendToQueue(
+        channel.publish(
+          'app.events',
           event.event_type,
           Buffer.from(JSON.stringify(event.payload)),
           { persistent: true }
         );
-
         await channel.waitForConfirms();
 
         await client.query(

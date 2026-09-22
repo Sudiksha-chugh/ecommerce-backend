@@ -321,6 +321,41 @@ describe('POST /products/decrement-stock', () => {
     await pool.query('DELETE FROM products');
   });
 
+  it('rejects the request when the internal service key is missing', async () => {
+    const res = await request(app)
+      .post('/products/decrement-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId,
+            quantity: 1,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.error).toBe('Invalid internal service credentials');
+  });
+
+  it('rejects the request when the internal service key is invalid', async () => {
+    const res = await request(app)
+      .post('/products/decrement-stock')
+      .set('Authorization', `Bearer ${token}`)
+      .set('x-internal-service-key', 'incorrect-internal-key')
+      .send({
+        items: [
+          {
+            productId,
+            quantity: 1,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.error).toBe('Invalid internal service credentials');
+  });
+
   it('decrements product stock by the requested quantity', async () => {
     const res = await request(app)
       .post('/products/decrement-stock')

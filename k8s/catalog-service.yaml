@@ -12,9 +12,22 @@ spec:
       labels:
         app: catalog-service
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: catalog-service
-          image: sudikshachugh/catalog-service:local
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          image: docker.io/sudikshachugh/catalog-service:nonroot-v1
           imagePullPolicy: Never
 
           envFrom:
