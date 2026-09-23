@@ -75,6 +75,8 @@ jobs:
           DB_PASSWORD: auth_pass
           DB_NAME_TEST: auth_db_test
           JWT_CURRENT_SECRET: test-current-secret-32-characters-long
+          AUTH0_DOMAIN: test-tenant.auth0.com
+          AUTH0_AUDIENCE: https://test-api.example.com
         run: npm test
 
   catalog-service:
@@ -168,6 +170,8 @@ jobs:
           ES_NODE: http://localhost:9200
           JWT_CURRENT_SECRET: test-current-secret-32-characters-long
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          AUTH0_DOMAIN: test-tenant.auth0.com
+          AUTH0_AUDIENCE: https://test-api.example.com
         run: npm test
 
   cart-service:
@@ -349,7 +353,16 @@ jobs:
               updated_at TIMESTAMP DEFAULT NOW()
             );
             
-             CREATE TABLE outbox_events (
+            CREATE TABLE refunds (
+              id SERIAL PRIMARY KEY,
+              order_id INTEGER NOT NULL UNIQUE,
+              user_id INTEGER NOT NULL,
+              amount NUMERIC(10,2) NOT NULL,
+              status VARCHAR(50) NOT NULL,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE outbox_events (
               id SERIAL PRIMARY KEY,
               event_type VARCHAR(50) NOT NULL,
               payload JSONB NOT NULL,
