@@ -620,7 +620,16 @@ k8s/
 
 The application has been tested using **Docker Desktop's local Kubernetes cluster**.
 
-Stateless services can be independently scaled, while stateful infrastructure currently uses the Kubernetes resources configured in the manifests.
+The manifests include resource requests/limits, readiness and liveness probes, non-root application containers, dropped Linux capabilities, `RuntimeDefault` seccomp profiles, and Kubernetes Secret references.
+
+The current Kubernetes environment is intentionally sized for local development and reliability testing:
+
+* A single Kubernetes node is used.
+* Stateless application services currently run with one replica each.
+* PostgreSQL, RabbitMQ, Elasticsearch, and Redis are currently single-instance deployments.
+* PostgreSQL, RabbitMQ, and Elasticsearch use PersistentVolumeClaims.
+* Redis is intentionally ephemeral; loss of the Redis pod or its storage can lose active cart data.
+* Production high availability would require a multi-node cluster plus deliberate HA designs for the stateful dependencies.
 
 ---
 
@@ -1234,10 +1243,6 @@ The current rate limiter uses in-memory state.
 
 A shared Redis-backed implementation would be preferable when running multiple Gateway replicas.
 
-### RabbitMQ Persistence in Kubernetes
-
-The current Kubernetes RabbitMQ deployment does not yet use a dedicated PersistentVolumeClaim for durable broker state.
-
 ### Database Migrations
 
 Database schemas are currently initialized through application/database setup rather than a dedicated migration framework.
@@ -1295,14 +1300,13 @@ A production deployment would typically use a private registry with appropriate 
 * [x] Kubernetes deployment
 * [x] Postman end-to-end testing
 * [x] GitHub Actions CI
-* [x] 109/109 automated tests passing
+* [x] All six service test suites passing
 
 ## Planned
 
 * [ ] OpenTelemetry distributed tracing
 * [ ] Prometheus metrics
 * [ ] Grafana dashboards
-* [ ] Persistent RabbitMQ storage in Kubernetes
 * [ ] Kubernetes Ingress
 * [ ] Horizontal Pod Autoscaling
 * [ ] Production secrets management
@@ -1359,7 +1363,7 @@ For a larger production deployment, the architecture could be extended with:
 * Managed PostgreSQL
 * Managed Redis
 * Highly available RabbitMQ
-* RabbitMQ PersistentVolumes
+* Highly available RabbitMQ with replicated/dedicated production infrastructure
 * Database migration tooling
 * Dedicated secrets management
 * Private container registry
