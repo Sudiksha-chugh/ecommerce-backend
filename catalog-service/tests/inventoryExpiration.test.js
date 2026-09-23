@@ -131,4 +131,60 @@ describe('Inventory expiration worker', () => {
     expect(reservations.rows[0].status).toBe('released');
     expect(reservations.rows[1].status).toBe('released');
   });
+    it('serializes expiration and confirmation for the same reservation', async () => {
+    await pool.query(
+      `UPDATE products
+       SET stock = stock - 2
+       WHERE id = $1`,
+      [productId]
+    );
+
+    const reservation = await pool.query(
+      `INSERT INTO inventory_reservations
+       (order_id, product_id, quantity, status, expires_at)
+       VALUES ($1, $2, $3, 'reserved', NOW() - INTERVAL '1 minute')
+       RETURNING id`,
+      [1003, productId, 2]
+    );
+
+    const reservationId = reservation.rows[0].id;
+
+    const confirmationPromise = pool.query(
+      `UPDATE inventory_reservations
+       SET status = 'confirmed'
+       WHERE id = $1
+         AND status = 'reserved'
+       RETURNING *`,
+      [reservationId]
+    );
+
+    const expirationPromise = releaseExpiredReservations();
+
+    await Promise.all([
+      confirmationPromise,
+      expirationPromise,
+    ]);
+
+    const reservationResult = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE id = $1`,
+      [reservationId]
+    );
+
+    const productResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(['confirmed', 'released']).toContain(
+      reservationResult.rows[0].status
+    );
+
+    if (reservationResult.rows[0].status === 'confirmed') {
+      expect(productResult.rows[0].stock).toBe(8);
+    } else {
+      expect(productResult.rows[0].stock).toBe(10);
+    }
+  });
 });

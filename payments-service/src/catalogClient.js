@@ -1,8 +1,21 @@
 const CATALOG_SERVICE_URL =
   process.env.CATALOG_SERVICE_URL || 'http://localhost:4001';
 
+const CATALOG_REQUEST_TIMEOUT_MS = Number(
+  process.env.CATALOG_REQUEST_TIMEOUT_MS || 5000
+);
+
 async function updateStock(path, body, requestId) {
-  const response = await fetch(`${CATALOG_SERVICE_URL}${path}`, {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    CATALOG_REQUEST_TIMEOUT_MS
+  );
+
+  let response;
+
+  try {
+    response = await fetch(`${CATALOG_SERVICE_URL}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -10,7 +23,21 @@ async function updateStock(path, body, requestId) {
       'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY,
     },
     body: JSON.stringify(body),
+    signal: controller.signal,
   });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      const timeoutError = new Error(
+        `Catalog service request timed out after ${CATALOG_REQUEST_TIMEOUT_MS}ms`
+      );
+      timeoutError.code = 'ETIMEDOUT';
+      throw timeoutError;
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const text = await response.text();
 

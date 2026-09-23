@@ -380,6 +380,20 @@ if (existingReservations.rows.length > 0) {
     });
   }
 
+  const hasInactiveReservation = existingReservations.rows.some(
+    (reservation) =>
+      reservation.status === 'released' ||
+      reservation.status === 'refunded'
+  );
+
+  if (hasInactiveReservation) {
+    await client.query('ROLLBACK');
+
+    return res.status(409).json({
+      error: 'Order inventory reservation is no longer active',
+    });
+  }
+
   await client.query('COMMIT');
 
   return res.status(200).json({
@@ -597,6 +611,29 @@ app.post(
       );
 
       if (reservationResult.rows.length === 0) {
+        const releasedResult = await client.query(
+          `SELECT *
+           FROM inventory_reservations
+           WHERE order_id = $1
+             AND status = 'released'`,
+          [orderId]
+        );
+
+        if (releasedResult.rows.length > 0) {
+          await client.query('COMMIT');
+
+          logger.info('Inventory reservation already released', {
+            orderId,
+            reservations: releasedResult.rows,
+            requestId: req.requestId,
+          });
+
+          return res.status(200).json({
+            message: 'Inventory reservation already released',
+            reservations: releasedResult.rows,
+          });
+        }
+
         await client.query('ROLLBACK');
 
         return res.status(404).json({

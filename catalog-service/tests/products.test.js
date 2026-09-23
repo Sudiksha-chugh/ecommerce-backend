@@ -963,6 +963,107 @@ it('allows only one order to reserve the last available unit', async () => {
   expect(reservations.rows).toHaveLength(1);
   expect(reservations.rows[0].quantity).toBe(1);
 });
+
+  it('rejects a reservation retry when the existing reservation was released', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Released Reservation Product', 10.00, 3]
+    );
+
+    const productId = product.rows[0].id;
+
+    await pool.query(
+      `INSERT INTO inventory_reservations
+        (order_id, product_id, quantity, status)
+       VALUES ($1, $2, $3, 'released')`,
+      [106, productId, 2]
+    );
+
+    const res = await request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 106,
+        items: [
+          {
+            productId,
+            quantity: 2,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(409);
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(stockResult.rows[0].stock).toBe(3);
+
+    const reservationResult = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [106]
+    );
+
+    expect(reservationResult.rows).toHaveLength(1);
+    expect(reservationResult.rows[0].status).toBe('released');
+  });
+
+  it('rejects a reservation retry when the existing reservation was refunded', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Refunded Reservation Product', 10.00, 3]
+    );
+
+    const productId = product.rows[0].id;
+
+    await pool.query(
+      `INSERT INTO inventory_reservations
+        (order_id, product_id, quantity, status)
+       VALUES ($1, $2, $3, 'refunded')`,
+      [107, productId, 2]
+    );
+
+    const res = await request(app)
+      .post('/products/reserve-stock')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 107,
+        items: [
+          {
+            productId,
+            quantity: 2,
+          },
+        ],
+      });
+
+    expect(res.statusCode).toBe(409);
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(stockResult.rows[0].stock).toBe(3);
+
+    const reservationResult = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [107]
+    );
+
+    expect(reservationResult.rows).toHaveLength(1);
+    expect(reservationResult.rows[0].status).toBe('refunded');
+  });
+
 describe('POST /products/confirm-reservation', () => {
   afterEach(async () => {
     await pool.query('DELETE FROM inventory_reservations');
@@ -1060,6 +1161,7 @@ describe('POST /products/confirm-reservation', () => {
     // Confirming an already-confirmed reservation must not change stock.
     expect(stockResult.rows[0].stock).toBe(5);
   });
+
 });
 describe('POST /products/release-reservation', () => {
   afterEach(async () => {
@@ -1109,6 +1211,62 @@ describe('POST /products/release-reservation', () => {
     );
 
     expect(stockResult.rows[0].stock).toBe(5);
+  });
+
+  it('is idempotent when releasing an already-released reservation', async () => {
+    const product = await pool.query(
+      `INSERT INTO products (name, price, stock)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      ['Idempotent Release Product', 10.00, 3]
+    );
+
+    const productId = product.rows[0].id;
+
+    await pool.query(
+      `INSERT INTO inventory_reservations
+        (order_id, product_id, quantity, status)
+       VALUES ($1, $2, $3, 'reserved')`,
+      [402, productId, 2]
+    );
+
+    const firstRelease = await request(app)
+      .post('/products/release-reservation')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 402,
+      });
+
+    expect(firstRelease.statusCode).toBe(200);
+
+    const secondRelease = await request(app)
+      .post('/products/release-reservation')
+      .set('x-internal-service-key', internalServiceKey)
+      .send({
+        orderId: 402,
+      });
+
+    expect(secondRelease.statusCode).toBe(200);
+    expect(secondRelease.body.message).toBe(
+      'Inventory reservation already released'
+    );
+
+    const stockResult = await pool.query(
+      'SELECT stock FROM products WHERE id = $1',
+      [productId]
+    );
+
+    expect(stockResult.rows[0].stock).toBe(5);
+
+    const reservationResult = await pool.query(
+      `SELECT status
+       FROM inventory_reservations
+       WHERE order_id = $1`,
+      [402]
+    );
+
+    expect(reservationResult.rows).toHaveLength(1);
+    expect(reservationResult.rows[0].status).toBe('released');
   });
 });
 });

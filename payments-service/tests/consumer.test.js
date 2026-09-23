@@ -1,6 +1,8 @@
 
 jest.mock('amqplib');
 
+process.env.RETRY_DELAY_MS = '0';
+
 jest.mock('../src/payment-logic', () => ({
   processPayment: jest.fn().mockReturnValue({
     orderId: 1,
@@ -46,15 +48,17 @@ describe('startConsumer', () => {
   beforeEach(() => {
     mockChannel = {
       assertQueue: jest.fn().mockResolvedValue(),
+      assertExchange: jest.fn().mockResolvedValue(),
+      bindQueue: jest.fn().mockResolvedValue(),
       prefetch: jest.fn().mockResolvedValue(),
       consume: jest.fn(),
-      sendToQueue: jest.fn(),
+      publish: jest.fn(),
       waitForConfirms: jest.fn().mockResolvedValue(),
       ack: jest.fn(),
     };
 
     mockConnection = {
-      createChannel: jest.fn().mockResolvedValue(mockChannel),
+      createConfirmChannel: jest.fn().mockResolvedValue(mockChannel),
       on: jest.fn(),
     };
 
@@ -196,13 +200,15 @@ describe('startConsumer', () => {
 
     await expect(consumeCallback(badMsg)).resolves.not.toThrow();
 
-    const dlqCall = mockChannel.sendToQueue.mock.calls.find(
-      (call) => call[0] === 'order_placed_dlq'
+    const dlqCall = mockChannel.publish.mock.calls.find(
+      (call) =>
+        call[0] === 'app.events' &&
+        call[1] === 'order_placed_dlq'
     );
 
     expect(dlqCall).toBeDefined();
 
-    const dlqPayload = JSON.parse(dlqCall[1].toString());
+    const dlqPayload = JSON.parse(dlqCall[2].toString());
 
     expect(dlqPayload.originalMessage).toBe(badContent);
     expect(dlqPayload.error).toContain('JSON');
@@ -232,7 +238,56 @@ describe('startConsumer', () => {
       connectCallsBefore
     );
   });
+    it('re-registers consumers and prefetches on the new channel after reconnect', async () => {
+      jest.useFakeTimers();
 
+    const firstChannel = mockChannel;
+
+    const secondChannel = {
+      assertQueue: jest.fn().mockResolvedValue(),
+      assertExchange: jest.fn().mockResolvedValue(),
+      bindQueue: jest.fn().mockResolvedValue(),
+      prefetch: jest.fn().mockResolvedValue(),
+      consume: jest.fn(),
+      publish: jest.fn(),
+      waitForConfirms: jest.fn().mockResolvedValue(),
+      ack: jest.fn(),
+    };
+
+    mockConnection.createConfirmChannel
+      .mockResolvedValueOnce(firstChannel)
+      .mockResolvedValueOnce(secondChannel);
+
+    await startConsumer();
+
+    const closeHandler = mockConnection.on.mock.calls.find(
+      (call) => call[0] === 'close'
+    )[1];
+
+    closeHandler();
+
+    await jest.advanceTimersByTimeAsync(3000);
+
+    expect(mockConnection.createConfirmChannel).toHaveBeenCalledTimes(2);
+
+    expect(secondChannel.assertExchange).toHaveBeenCalledWith(
+      'app.events',
+      'direct',
+      { durable: true }
+    );
+
+     expect(secondChannel.prefetch).toHaveBeenCalledWith(1);
+
+     expect(secondChannel.consume).toHaveBeenCalledWith(
+       'order_placed',
+        expect.any(Function)
+      );
+
+       expect(secondChannel.consume).toHaveBeenCalledWith(
+         'refund_requested',
+          expect.any(Function)
+        );
+      });
   describe('idempotency', () => {
     beforeAll(() => {
       jest.useRealTimers();
@@ -295,6 +350,443 @@ describe('startConsumer', () => {
 
     });
 
+    it('treats a duplicate payment insert as already committed', async () => {
+      const fakeOrder = {
+        id: 501,
+        user_id: 1,
+        total_amount: '20.00',
+        requestId: 'ambiguous-commit-501',
+        items: [
+          {
+            productId: 1,
+            quantity: 1,
+          },
+        ],
+      };
+
+      const paymentPayload = {
+        orderId: fakeOrder.id,
+        userId: fakeOrder.user_id,
+        amount: fakeOrder.total_amount,
+        status: 'succeeded',
+        requestId: fakeOrder.requestId,
+      };
+
+      await pool.query(
+        `INSERT INTO payments (
+          order_id,
+          user_id,
+          amount,
+          status
+        )
+        VALUES ($1, $2, $3, $4)`,
+        [
+          paymentPayload.orderId,
+          paymentPayload.userId,
+          paymentPayload.amount,
+          paymentPayload.status,
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO outbox_events (
+          event_type,
+          payload
+        )
+        VALUES ($1, $2)`,
+        [
+          'payment_processed',
+          JSON.stringify(paymentPayload),
+        ]
+      );
+
+      const originalPoolQuery = pool.query;
+
+      const querySpy = jest
+        .spyOn(pool, 'query')
+        .mockImplementation((query, params) => {
+          if (
+            typeof query === 'string' &&
+            query.includes('transaction_id')
+          ) {
+            return Promise.resolve({ rows: [] });
+          }
+
+          return originalPoolQuery.call(pool, query, params);
+        });
+
+      try {
+        reserveStock.mockResolvedValueOnce({});
+        confirmReservation.mockResolvedValueOnce({});
+
+        processPayment.mockReturnValueOnce(paymentPayload);
+
+        await startConsumer();
+
+        const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+        const fakeMsg = {
+          content: Buffer.from(JSON.stringify(fakeOrder)),
+        };
+
+        await consumeCallback(fakeMsg);
+
+        expect(processPayment).toHaveBeenCalledTimes(1);
+        expect(reserveStock).toHaveBeenCalledTimes(1);
+        expect(confirmReservation).toHaveBeenCalledTimes(1);
+
+        expect(mockChannel.ack).toHaveBeenCalledTimes(1);
+
+        const dlqPublish = mockChannel.publish.mock.calls.find(
+          (call) =>
+            call[0] === 'app.events' &&
+            call[1] === 'order_placed_dlq'
+        );
+
+        expect(dlqPublish).toBeUndefined();
+
+        const payments = await originalPoolQuery.call(
+          pool,
+          `SELECT order_id, user_id, amount, status
+           FROM payments
+           WHERE order_id = $1`,
+          [fakeOrder.id]
+        );
+
+        expect(payments.rows.length).toBe(1);
+        expect(payments.rows[0].status).toBe('succeeded');
+
+        const outbox = await originalPoolQuery.call(
+          pool,
+          `SELECT event_type, payload
+           FROM outbox_events
+           WHERE event_type = $1
+             AND payload->>'orderId' = $2`,
+          ['payment_processed', String(fakeOrder.id)]
+        );
+
+        expect(outbox.rows.length).toBe(1);
+        expect(outbox.rows[0].payload.requestId).toBe(
+          fakeOrder.requestId
+        );
+      } finally {
+        querySpy.mockRestore();
+      }
+    });
+
+
+    it('treats a duplicate refund insert as already committed', async () => {
+      const fakeRefund = {
+        orderId: 503,
+        userId: 1,
+        amount: '20.00',
+        requestId: 'ambiguous-refund-503',
+        restoreInventory: false,
+        items: [
+          {
+            productId: 1,
+            quantity: 1,
+          },
+        ],
+      };
+
+      const refundPayload = {
+        orderId: fakeRefund.orderId,
+        userId: fakeRefund.userId,
+        amount: fakeRefund.amount,
+        status: 'refunded',
+        requestId: fakeRefund.requestId,
+      };
+
+      await pool.query(
+        `INSERT INTO refunds (
+          order_id,
+          user_id,
+          amount,
+          status
+        )
+        VALUES ($1, $2, $3, $4)`,
+        [
+          refundPayload.orderId,
+          refundPayload.userId,
+          refundPayload.amount,
+          refundPayload.status,
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO outbox_events (
+          event_type,
+          payload
+        )
+        VALUES ($1, $2)`,
+        [
+          'refund_processed',
+          JSON.stringify(refundPayload),
+        ]
+      );
+
+     const originalPoolQuery = pool.query;
+      let refundLookupCalls = 0;
+
+     const querySpy = jest
+       .spyOn(pool, 'query')
+       .mockImplementation((query, params) => {
+         if (
+             typeof query === 'string' &&
+             query.includes('FROM refunds') &&
+             query.includes('WHERE order_id = $1') &&
+             params?.[0] === fakeRefund.orderId
+            ) {
+              refundLookupCalls += 1;
+
+               if (refundLookupCalls === 1) {
+                 return Promise.resolve({ rows: [] });
+                }
+              }
+
+               return originalPoolQuery.call(pool, query, params);
+             });
+
+      try {
+        processRefund.mockReturnValueOnce(refundPayload);
+
+        await startConsumer();
+
+        const refundCallback = mockChannel.consume.mock.calls[1][1];
+
+        const fakeMsg = {
+          content: Buffer.from(JSON.stringify(fakeRefund)),
+        };
+
+        await refundCallback(fakeMsg);
+
+        expect(processRefund).toHaveBeenCalledTimes(1);
+        expect(refundReservation).not.toHaveBeenCalled();
+
+        expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+
+        const dlqPublish = mockChannel.publish.mock.calls.find(
+          (call) =>
+            call[0] === 'app.events' &&
+            call[1] === 'refund_requested_dlq'
+        );
+
+        expect(dlqPublish).toBeUndefined();
+
+        const refunds = await originalPoolQuery.call(
+          pool,
+          `SELECT order_id, user_id, amount, status
+           FROM refunds
+           WHERE order_id = $1`,
+          [fakeRefund.orderId]
+        );
+
+        expect(refunds.rows.length).toBe(1);
+        expect(refunds.rows[0].status).toBe('refunded');
+
+        const outbox = await originalPoolQuery.call(
+          pool,
+          `SELECT event_type, payload
+           FROM outbox_events
+           WHERE event_type = $1
+             AND payload->>'orderId' = $2`,
+          ['refund_processed', String(fakeRefund.orderId)]
+        );
+
+        expect(outbox.rows.length).toBe(1);
+        expect(outbox.rows[0].payload.requestId).toBe(
+          fakeRefund.requestId
+        );
+      } finally {
+        querySpy.mockRestore();
+      }
+    });
+
+    it('retries a transient inventory reservation failure and succeeds', async () => {
+      jest.useRealTimers();
+
+      reserveStock
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Catalog temporarily unavailable'), {
+            status: 503,
+          })
+        )
+        .mockResolvedValueOnce({});
+
+      await startConsumer();
+
+      const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+      const fakeOrder = {
+        id: 502,
+        user_id: 1,
+        total_amount: '20.00',
+        requestId: 'retry-reserve-502',
+        items: [
+          {
+            productId: 1,
+            quantity: 1,
+          },
+        ],
+      };
+
+      const fakeMsg = {
+        content: Buffer.from(JSON.stringify(fakeOrder)),
+      };
+
+      processPayment.mockReturnValueOnce({
+        orderId: fakeOrder.id,
+        userId: fakeOrder.user_id,
+        amount: fakeOrder.total_amount,
+        status: 'succeeded',
+      });
+
+      await consumeCallback(fakeMsg);
+
+      expect(reserveStock).toHaveBeenCalledTimes(2);
+      expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+
+      const payment = await pool.query(
+        `SELECT order_id, status
+         FROM payments
+         WHERE order_id = $1`,
+        [fakeOrder.id]
+      );
+
+      expect(payment.rows.length).toBe(1);
+      expect(payment.rows[0].status).toBe('succeeded');
+    });
+
+    it('does not retry a permanent inventory reservation failure and sends the message to the DLQ', async () => {
+      jest.useRealTimers();
+
+      reserveStock.mockRejectedValueOnce(
+        Object.assign(new Error('Insufficient stock'), {
+          status: 409,
+        })
+      );
+
+      await startConsumer();
+
+      const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+      const fakeOrder = {
+        id: 503,
+        user_id: 1,
+        total_amount: '20.00',
+        requestId: 'permanent-reserve-503',
+        items: [
+          {
+            productId: 1,
+            quantity: 1,
+          },
+        ],
+      };
+
+      const fakeMsg = {
+        content: Buffer.from(JSON.stringify(fakeOrder)),
+      };
+
+      await consumeCallback(fakeMsg);
+
+      expect(reserveStock).toHaveBeenCalledTimes(1);
+
+      const dlqCall = mockChannel.publish.mock.calls.find(
+        (call) =>
+          call[0] === 'app.events' &&
+          call[1] === 'order_placed_dlq'
+      );
+
+      expect(dlqCall).toBeDefined();
+      expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+
+      const payment = await pool.query(
+        `SELECT order_id
+         FROM payments
+         WHERE order_id = $1`,
+        [fakeOrder.id]
+      );
+
+      expect(payment.rows.length).toBe(0);
+    });
+
+    it('retries a transient payment database failure and eventually processes the order', async () => {
+      jest.useRealTimers();
+
+      const originalPoolQuery = pool.query;
+      let lookupAttempts = 0;
+
+      pool.query = jest.fn(async (...args) => {
+        const sql = typeof args[0] === 'string' ? args[0] : '';
+
+        if (
+          sql.includes('SELECT order_id, user_id, amount, status, transaction_id')
+        ) {
+          lookupAttempts += 1;
+
+          if (lookupAttempts === 1) {
+            throw Object.assign(
+              new Error('Database temporarily unavailable'),
+              { code: 'ECONNRESET' }
+            );
+          }
+        }
+
+        return originalPoolQuery.apply(pool, args);
+      });
+
+      try {
+        await startConsumer();
+
+        const consumeCallback = mockChannel.consume.mock.calls[0][1];
+
+        const fakeOrder = {
+          id: 505,
+          user_id: 1,
+          total_amount: '20.00',
+          requestId: 'retry-db-505',
+          items: [
+            {
+              productId: 1,
+              quantity: 1,
+            },
+          ],
+        };
+
+        processPayment.mockReturnValueOnce({
+          orderId: fakeOrder.id,
+          userId: fakeOrder.user_id,
+          amount: fakeOrder.total_amount,
+          status: 'succeeded',
+        });
+
+        const fakeMsg = {
+          content: Buffer.from(JSON.stringify(fakeOrder)),
+        };
+
+        await consumeCallback(fakeMsg);
+
+        expect(lookupAttempts).toBe(2);
+        expect(reserveStock).toHaveBeenCalledTimes(1);
+        expect(confirmReservation).toHaveBeenCalledTimes(1);
+        expect(mockChannel.ack).toHaveBeenCalledWith(fakeMsg);
+
+        const payment = await originalPoolQuery.call(
+         pool,
+         `SELECT order_id, status
+          FROM payments
+          WHERE order_id = $1`,
+         [fakeOrder.id]
+        );
+
+        expect(payment.rows.length).toBe(1);
+        expect(payment.rows[0].status).toBe('succeeded');
+      } finally {
+        pool.query = originalPoolQuery;
+      }
+    });
+
     it('processes a valid refund request and publishes the result', async () => {
       await startConsumer();
 
@@ -347,8 +839,10 @@ describe('startConsumer', () => {
 
       await expect(refundCallback(badMsg)).resolves.not.toThrow();
 
-      const dlqCall = mockChannel.sendToQueue.mock.calls.find(
-        (call) => call[0] === 'refund_requested_dlq'
+      const dlqCall = mockChannel.publish.mock.calls.find(
+        (call) =>
+          call[0] === 'app.events' &&
+          call[1] === 'refund_requested_dlq'
       );
 
       expect(dlqCall).toBeDefined();
@@ -384,7 +878,8 @@ describe('startConsumer', () => {
 
       await consumeCallback(fakeMsg);
 
-      expect(mockChannel.sendToQueue).not.toHaveBeenCalledWith(
+      expect(mockChannel.publish).not.toHaveBeenCalledWith(
+        'app.events',
         'payment_processed',
         expect.any(Buffer),
         { persistent: true }
