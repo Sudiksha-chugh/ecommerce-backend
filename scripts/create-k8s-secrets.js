@@ -121,6 +121,7 @@ async function main() {
 
   const authDbPassword = await ask('Auth DB password: ', true);
   const catalogDbPassword = await ask('Catalog DB password: ', true);
+  const inventoryDbPassword = await ask('Inventory DB password: ', true);
   const ordersDbPassword = await ask('Orders DB password: ', true);
   const paymentsDbPassword = await ask('Payments DB password: ', true);
 
@@ -166,6 +167,18 @@ async function main() {
     DB_USER: 'catalog_user',
     DB_PASSWORD: catalogDbPassword,
     DB_NAME: 'catalog_db',
+  });
+
+  applySecret('inventory-db-secret', {
+    POSTGRES_USER: 'inventory_user',
+    POSTGRES_PASSWORD: inventoryDbPassword,
+    POSTGRES_DB: 'inventory_db',
+  });
+
+  applySecret('inventory-service-secret', {
+    DB_USER: 'inventory_user',
+    DB_PASSWORD: inventoryDbPassword,
+    DB_NAME: 'inventory_db',
   });
 
   applySecret('cart-service-secret', {
