@@ -78,11 +78,12 @@ function startOutboxPoller() {
   );
 }
 
-function stopOutboxPoller() {
+async function stopOutboxPoller() {
   if (pollerTimer) {
     clearInterval(pollerTimer);
     pollerTimer = null;
   }
+  while (pollInProgress) await new Promise(resolve => setTimeout(resolve, 25));
 }
 
 module.exports = {

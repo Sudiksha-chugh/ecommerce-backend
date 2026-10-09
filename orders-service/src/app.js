@@ -21,7 +21,7 @@ app.post('/orders', authenticateAuth0User, async (req, res) => {
   const { items, totalAmount } = req.body;
   const idempotencyKey = req.headers['idempotency-key'] || null;
 
-  if (!items || !totalAmount) {
+  if (!Array.isArray(items) || !items.length || items.some(i => !Number.isInteger(i.productId) || i.productId <= 0 || !Number.isInteger(i.quantity) || i.quantity <= 0) || new Set(items.map(i=>i.productId)).size !== items.length || !Number.isFinite(Number(totalAmount)) || Number(totalAmount) <= 0) {
     logger.warn('Order creation validation failed', {
       userId,
       reason: 'items and totalAmount are required',
@@ -75,17 +75,30 @@ app.post('/orders', authenticateAuth0User, async (req, res) => {
 
       return res.status(200).json(newOrder);
     }
+      await client.query(
+  `INSERT INTO order_sagas (order_id, state)
+   VALUES ($1, $2)`,
+  [newOrder.id, 'PENDING']
+);
 
-    const orderPlacedEvent = {
-      ...newOrder,
-      requestId: req.requestId,
-    };
+// Request Inventory Service to reserve stock
+const inventoryReserveRequestedEvent = {
+  eventId: `${newOrder.id}:inventory_reserve_requested:0`,
+  orderId: newOrder.id,
+  userId,
+  amount: newOrder.total_amount,
+  items: newOrder.items,
+  requestId: req.requestId,
+};
 
-    await client.query(
-      `INSERT INTO outbox_events (event_type, payload)
-       VALUES ($1, $2)`,
-      ['order_placed', JSON.stringify(orderPlacedEvent)]
-    );
+await client.query(
+  `INSERT INTO outbox_events (event_type, payload)
+   VALUES ($1, $2)`,
+  [
+    'inventory_reserve_requested',
+    JSON.stringify(inventoryReserveRequestedEvent),
+  ]
+);
 
     await client.query('COMMIT');
 
@@ -125,174 +138,18 @@ app.post('/orders', authenticateAuth0User, async (req, res) => {
   }
 });
 
-// Cancel order
+// Cancellation is a durable Saga request, including a safe retry after refund failure.
 app.patch('/orders/:id/cancel', authenticateAuth0User, async (req, res) => {
-  const orderId = req.params.id;
-  const userId = req.user.userId;
-
-  let client;
-
+  const orderId = Number(req.params.id);
+  if (!Number.isInteger(orderId) || orderId <= 0) return res.status(400).json({error:'Invalid order ID'});
   try {
-    client = await pool.connect();
-
-    const orderResult = await client.query(
-      'SELECT * FROM orders WHERE id = $1',
-      [orderId]
-    );
-
-    if (orderResult.rows.length === 0) {
-      logger.warn('Order cancellation failed: order not found', {
-        orderId,
-        userId,
-        requestId: req.requestId,
-      });
-
-      return res.status(404).json({
-        error: 'Order not found',
-      });
-    }
-
-    const order = orderResult.rows[0];
-
-    if (order.user_id !== userId) {
-      logger.warn('Unauthorized order cancellation attempt', {
-        orderId,
-        userId,
-        orderOwnerId: order.user_id,
-        requestId: req.requestId,
-      });
-
-      return res.status(403).json({
-        error: 'You do not have permission to cancel this order',
-      });
-    }
-
-    // Payment has not succeeded yet
-    if (order.status === 'pending') {
-      const updateResult = await client.query(
-        `UPDATE orders
-         SET status = 'cancelled'
-         WHERE id = $1
-           AND status = 'pending'
-         RETURNING *`,
-        [orderId]
-      );
-
-      if (updateResult.rows.length === 0) {
-        logger.warn('Order cancellation lost race', {
-          orderId,
-          userId,
-          requestId: req.requestId,
-        });
-
-        return res.status(409).json({
-          error: 'Order cannot be cancelled because its status has changed',
-        });
-      }
-
-      logger.info('Pending order cancelled successfully', {
-        orderId,
-        userId,
-        requestId: req.requestId,
-      });
-
-      return res.status(200).json(updateResult.rows[0]);
-    }
-
-    // Payment already succeeded → refund required
-    if (
-      order.status === 'succeeded' ||
-      order.status === 'inventory_failed'
-    ) {
-      await client.query('BEGIN');
-
-      const updateResult = await client.query(
-        `UPDATE orders
-         SET status = 'refund_pending'
-         WHERE id = $1
-           AND status = $2
-         RETURNING *`,
-        [orderId, order.status]
-      );
-
-      if (updateResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-
-        logger.warn('Order cancellation lost race', {
-          orderId,
-          userId,
-          requestId: req.requestId,
-        });
-
-        return res.status(409).json({
-          error: 'Order cannot be cancelled because its status has changed',
-        });
-      }
-      await client.query(
-        `INSERT INTO outbox_events (event_type, payload)
-         VALUES ($1, $2)`,
-        [
-          'refund_requested',
-          JSON.stringify({
-            orderId: order.id,
-            userId: order.user_id,
-            amount: order.total_amount,
-            items: order.items,
-            restoreInventory: order.status !== 'inventory_failed',
-            requestId: req.requestId,
-          }),
-        ]
-      );
-
-      await client.query('COMMIT');
-
-      logger.info('Refund requested for order', {
-        orderId,
-        userId,
-        amount: order.total_amount,
-        requestId: req.requestId,
-      });
-
-      return res.status(202).json(updateResult.rows[0]);
-    }
-
-    logger.warn('Order cannot be cancelled in current state', {
-      orderId,
-      userId,
-      status: order.status,
-      requestId: req.requestId,
-    });
-
-    return res.status(409).json({
-      error: `Cannot cancel an order with status "${order.status}"`,
-    });
-  } catch (err) {
-    if (client) {
-      await client.query('ROLLBACK').catch((rollbackErr) => {
-        logger.error('Cancel order rollback failed', {
-          error: rollbackErr.message,
-          orderId,
-          userId,
-          requestId: req.requestId,
-        });
-      });
-    }
-
-    logger.error('Failed to cancel order', {
-      error: err.message,
-      orderId,
-      userId,
-      requestId: req.requestId,
-    });
-
-    return res.status(500).json({
-      error: 'Failed to cancel order',
-    });
-  } finally {
-    if (client) {
-      client.release();
-    }
-  }
+    const result = await pool.query('SELECT * FROM orders WHERE id=$1',[orderId]);
+    if (!result.rows.length) return res.status(404).json({error:'Order not found'});
+    if (String(result.rows[0].user_id) !== String(req.user.userId)) return res.status(403).json({error:'Forbidden'});
+    const { processSagaEvent } = require('./sagaStore');
+    await processSagaEvent('cancel_requested',{eventId:require('crypto').randomUUID(),orderId,requestId:req.requestId});
+    const updated = await pool.query('SELECT * FROM orders WHERE id=$1',[orderId]);
+    return res.status(updated.rows[0].status === 'cancelled' ? 200 : 202).json(updated.rows[0]);
+  } catch(error) { logger.error('Cancellation request failed',{orderId,error:error.message}); return res.status(500).json({error:'Cancellation request failed'}); }
 });
-
 module.exports = app;

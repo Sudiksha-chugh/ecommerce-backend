@@ -10,8 +10,9 @@ async function pollOnce() {
 
   isPolling = true;
 
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const result = await client.query(
       `SELECT *
        FROM outbox_events
@@ -40,14 +41,7 @@ async function pollOnce() {
 
     for (const event of result.rows) {
       try {
-        channel.publish(
-          'app.events',
-          event.event_type,
-          Buffer.from(JSON.stringify(event.payload)),
-          { persistent: true }
-        );
-
-        await channel.waitForConfirms();
+        await require('./publishConfirmed').publishConfirmed(channel,event.event_type,event.payload);
 
         await client.query(
           `UPDATE outbox_events
@@ -67,23 +61,24 @@ async function pollOnce() {
       }
     }
   } finally {
-    client.release();
+    if (client) client.release();
     isPolling = false;
   }
 }
 
 function startOutboxPoller() {
-  intervalHandle = setInterval(pollOnce, POLL_INTERVAL_MS);
+  intervalHandle = setInterval(() => pollOnce().catch(error => console.error("Outbox poll failed", error.code || "unknown")), POLL_INTERVAL_MS);
   console.log(
     `Payments outbox poller started, checking every ${POLL_INTERVAL_MS}ms`
   );
 }
 
-function stopOutboxPoller() {
+async function stopOutboxPoller() {
   if (intervalHandle) {
     clearInterval(intervalHandle);
     intervalHandle = null;
   }
+  while (isPolling) await new Promise(resolve => setTimeout(resolve, 25));
 }
 
 module.exports = {

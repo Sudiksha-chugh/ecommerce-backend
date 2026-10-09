@@ -1,0 +1,10 @@
+const {execFileSync}=require('child_process');
+const invoke=args=>execFileSync('docker',['exec','rabbitmq','rabbitmqctl',...args],{encoding:'utf8',stdio:['pipe','pipe','pipe']});
+const lines=invoke(['list_permissions','-p','/']).split('\n');
+const row=lines.find(x=>x.startsWith('orders_app\t'));
+if(!row)throw new Error('orders_app permissions not found');
+const [,configure,write,read]=row.trim().split('\t');
+const extra='^(inventory_expired|inventory_expired_dlq|inventory_confirmation_failed|inventory_confirmation_failed_dlq)$';
+const append=pattern=>pattern.includes('inventory_expired')?pattern:`(?:${pattern})|${extra}`;
+invoke(['set_permissions','-p','/','orders_app',append(configure),append(write),append(read)]);
+console.log('orders_app permissions extended only for expiration and confirmation-failure queues/DLQs; other users unchanged.');

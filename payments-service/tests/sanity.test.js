@@ -8,3 +8,4 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
   });
 });
+afterAll(() => require("../src/logger").close());

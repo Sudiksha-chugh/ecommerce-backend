@@ -14,7 +14,7 @@ process.env.DB_PASSWORD =
   process.env.DB_PASSWORD || process.env.INVENTORY_DB_PASSWORD;
 process.env.DB_NAME = process.env.DB_NAME || 'inventory_db';
 process.env.DB_NAME_TEST =
-  process.env.DB_NAME_TEST || 'inventory_db';
+  process.env.DB_NAME_TEST || 'inventory_phase2_test';
 
 process.env.INTERNAL_SERVICE_KEY =
   process.env.INTERNAL_SERVICE_KEY || 'test-internal-service-key';

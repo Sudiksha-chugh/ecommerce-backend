@@ -19,6 +19,8 @@ describe('inventory APIs', () => {
     await pool.query('DELETE FROM outbox_events');
     await pool.query('DELETE FROM reservations');
     await pool.query('DELETE FROM inventory');
+    await pool.query('DELETE FROM inbox_events');
+    await pool.query('DELETE FROM inventory_order_operations');
   });
 
   describe('POST /inventory/stock', () => {
@@ -348,3 +350,5 @@ describe('inventory APIs', () => {
     });
   });
 });
+
+afterAll(() => pool.end());

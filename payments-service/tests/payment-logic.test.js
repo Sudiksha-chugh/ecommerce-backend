@@ -2,7 +2,7 @@ const { processPayment } = require('../src/payment-logic');
 
 describe('processPayment', () => {
   it('returns a result with the correct orderId, userId, and amount', () => {
-    const order = { id: 1, user_id: 5, total_amount: '99.99' };
+    const order = { orderId: 1, userId: 5, amount: '99.99' };
     const result = processPayment(order);
 
     expect(result.orderId).toBe(1);
@@ -11,7 +11,7 @@ describe('processPayment', () => {
   });
 
   it('returns either "succeeded" or "failed" as the status', () => {
-    const order = { id: 2, user_id: 3, total_amount: '10.00' };
+    const order = { orderId: 2, userId: 3, amount: '10.00' };
     const result = processPayment(order);
 
     expect(['succeeded', 'failed']).toContain(result.status);

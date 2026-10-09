@@ -5,13 +5,14 @@ require('dotenv').config();
 const esTransportOpts = {
   level: 'info',
   clientOpts: { node: process.env.ES_NODE || 'http://localhost:9200' },
-  index: 'logs',
+  index: process.env.LOG_INDEX || 'ecommerce-logs-write',
+  ensureIndexTemplate: false,
   transformer: (logData) => ({
     '@timestamp': new Date().toISOString(),
     service: 'inventory-service',
     level: logData.level,
     message: logData.message,
-    meta: logData.meta || {},
+    meta: require('./logIdentifiers').normalizeIdentifiers(logData.meta || {}),
   }),
 };
 
@@ -26,8 +27,9 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 const logger = winston.createLogger({
+  silent: process.env.NODE_ENV === "test",
   level: 'info',
-  format: winston.format.json(),
+  format: winston.format.combine(winston.format(info => Object.assign(info, require('./logIdentifiers').normalizeIdentifiers(info)))(), winston.format.json()),
   defaultMeta: { service: 'inventory-service' },
   transports,
   exitOnError: false,

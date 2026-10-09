@@ -6,3 +6,5 @@ describe('database connections', () => {
     expect(res.rows[0].result).toBe(2);
   });
 });
+
+afterAll(() => pool.end());

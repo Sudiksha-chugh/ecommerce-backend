@@ -43,10 +43,6 @@ spec:
               value: http://elasticsearch:9200
             - name: PORT
               value: "4001"
-            - name: RESERVATION_EXPIRATION_MINUTES
-              value: "15"
-            - name: INVENTORY_EXPIRATION_INTERVAL_MS
-              value: "60000"
             - name: INTERNAL_SERVICE_KEY
               valueFrom:
                 secretKeyRef:

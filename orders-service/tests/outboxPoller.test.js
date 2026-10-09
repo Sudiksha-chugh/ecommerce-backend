@@ -1,3 +1,4 @@
+const fixtureDb=process.env.PHASE2_INTEGRATION==='true' ? require('../../scripts/phase2/test-support/admin-db')('orders',require('pg')) : require('../src/db');
 jest.mock('../src/rabbitmq');
 
 const pool = require('../src/db');
@@ -14,7 +15,7 @@ async function insertOutboxEvent(payload) {
 
 describe('pollOnce', () => {
   afterEach(async () => {
-    await pool.query('DELETE FROM outbox_events');
+    await fixtureDb.query('DELETE FROM outbox_events');
     jest.clearAllMocks();
   });
 
@@ -27,6 +28,7 @@ describe('pollOnce', () => {
     const mockWaitForConfirms = jest.fn().mockResolvedValue();
 
     getChannel.mockReturnValue({
+      on: jest.fn(), removeListener: jest.fn(),
       publish: mockPublish,
       waitForConfirms: mockWaitForConfirms,
     });
@@ -39,7 +41,7 @@ describe('pollOnce', () => {
       'app.events',
       'order_placed',
       expect.any(Buffer),
-      { persistent: true }
+      expect.objectContaining({ persistent: true, mandatory: true })
     );
     expect(mockWaitForConfirms).toHaveBeenCalled();
 
@@ -61,6 +63,7 @@ describe('pollOnce', () => {
 
   it('leaves an event unpublished if RabbitMQ does not confirm the message', async () => {
   getChannel.mockReturnValue({
+      on: jest.fn(), removeListener: jest.fn(),
     publish: jest.fn(),
     waitForConfirms: jest.fn().mockRejectedValue(
       new Error('Publisher confirmation failed')
@@ -86,6 +89,7 @@ describe('pollOnce', () => {
 
   it('leaves an event unpublished if publish throws, without crashing the poller', async () => {
     getChannel.mockReturnValue({
+      on: jest.fn(), removeListener: jest.fn(),
       publish: jest.fn(() => {
         throw new Error('Simulated channel failure');
       }),
@@ -130,6 +134,7 @@ describe('pollOnce', () => {
     };
 
     getChannel.mockReturnValue({
+      on: jest.fn(), removeListener: jest.fn(),
       publish: mockPublish,
       waitForConfirms: mockWaitForConfirms,
     });
@@ -153,7 +158,7 @@ describe('pollOnce', () => {
       'app.events',
       'order_placed',
       expect.any(Buffer),
-      { persistent: true }
+      expect.objectContaining({ persistent: true, mandatory: true })
     );
 
     expect(mockWaitForConfirms).toHaveBeenCalled();
@@ -180,6 +185,7 @@ describe('pollOnce', () => {
       .mockResolvedValue();
 
     getChannel.mockReturnValue({
+      on: jest.fn(), removeListener: jest.fn(),
       publish: mockPublish,
       waitForConfirms: mockWaitForConfirms,
     });
@@ -218,6 +224,7 @@ describe('pollOnce', () => {
 
   it('does nothing when there are no unpublished events', async () => {
     getChannel.mockReturnValue({
+      on: jest.fn(), removeListener: jest.fn(),
       publish: jest.fn(),
       waitForConfirms: jest.fn().mockResolvedValue(),
     });
@@ -226,3 +233,4 @@ describe('pollOnce', () => {
   });
 
 });
+if(process.env.PHASE2_INTEGRATION==='true')afterAll(()=>fixtureDb.end());

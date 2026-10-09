@@ -175,6 +175,89 @@ jobs:
           AUTH0_AUDIENCE: https://test-api.example.com
         run: npm test
 
+  inventory-service:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: inventory_user
+          POSTGRES_PASSWORD: inventory_pass
+          POSTGRES_DB: inventory_db_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: inventory-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: inventory-service
+        run: npm ci
+
+      - name: Create test database schema
+        run: |
+          PGPASSWORD=inventory_pass psql -h localhost -U inventory_user -d inventory_db_test -c "
+            CREATE TABLE inventory (
+              product_id INTEGER PRIMARY KEY,
+              quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+              updated_at TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE reservations (
+              id SERIAL PRIMARY KEY,
+              order_id INTEGER NOT NULL,
+              product_id INTEGER NOT NULL,
+              quantity INTEGER NOT NULL CHECK (quantity > 0),
+              status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+              created_at TIMESTAMP DEFAULT NOW(),
+              expires_at TIMESTAMP,
+              CONSTRAINT unique_order_product UNIQUE (order_id, product_id),
+              CONSTRAINT reservations_status_check
+                CHECK (status IN ('PENDING', 'CONFIRMED', 'RELEASED', 'EXPIRED'))
+            );
+
+            CREATE INDEX idx_reservations_expiration
+            ON reservations (expires_at)
+            WHERE status = 'PENDING';
+
+            CREATE TABLE outbox_events (
+              id SERIAL PRIMARY KEY,
+              event_type VARCHAR(50) NOT NULL,
+              payload JSONB NOT NULL,
+              published BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at TIMESTAMP DEFAULT NOW(),
+              published_at TIMESTAMP
+            );"
+
+      - name: Apply Phase 2 test migration
+        run: PGPASSWORD=inventory_pass psql -v ON_ERROR_STOP=1 -h localhost -U inventory_user -d inventory_db_test -f inventory-service/migrations/001_command_dedup.sql
+
+      - name: Run tests
+        working-directory: inventory-service
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: inventory_user
+          DB_PASSWORD: inventory_pass
+          DB_NAME_TEST: inventory_db_test
+          INTERNAL_SERVICE_KEY: test-internal-service-key
+        run: npm test
+
   cart-service:
     runs-on: ubuntu-latest
 
@@ -270,9 +353,11 @@ jobs:
               created_at TIMESTAMP DEFAULT NOW(),
               idempotency_key VARCHAR(255)
             );
+
             CREATE UNIQUE INDEX orders_user_id_idempotency_key_idx
             ON orders (user_id, idempotency_key)
             WHERE idempotency_key IS NOT NULL;
+
             CREATE TABLE outbox_events (
               id SERIAL PRIMARY KEY,
               event_type VARCHAR(50) NOT NULL,
@@ -280,7 +365,34 @@ jobs:
               published BOOLEAN NOT NULL DEFAULT FALSE,
               created_at TIMESTAMP DEFAULT NOW(),
               published_at TIMESTAMP
-            );"
+            );
+
+            CREATE TABLE order_sagas (
+              order_id INTEGER PRIMARY KEY
+                REFERENCES orders(id) ON DELETE CASCADE,
+              state VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+              version INTEGER NOT NULL DEFAULT 1,
+              last_error TEXT,
+              created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+
+            CREATE INDEX idx_order_sagas_state
+            ON order_sagas (state);
+
+            CREATE TABLE inbox_events (
+              event_id VARCHAR(255) PRIMARY KEY,
+              event_type VARCHAR(100) NOT NULL,
+              order_id INTEGER,
+              received_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              processed_at TIMESTAMP
+            );
+
+            CREATE INDEX idx_inbox_events_order_id
+            ON inbox_events (order_id);
+          "
+      - name: Apply Phase 2 test migration
+        run: PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d orders_db_test -f orders-service/migrations/002_saga_compensation.sql
 
       - name: Run tests
         working-directory: orders-service
@@ -371,6 +483,9 @@ jobs:
               created_at TIMESTAMP DEFAULT NOW(),
                published_at TIMESTAMP
              );"
+      - name: Apply Phase 2 test migration
+        run: PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments_db_test -f payments-service/migrations/001_inbox.sql
+
       - name: Run tests
         working-directory: payments-service
         env:

@@ -1,0 +1,2 @@
+CREATE TABLE inbox_events (event_id VARCHAR(255) PRIMARY KEY, order_id INTEGER NOT NULL, processed_at TIMESTAMP NOT NULL DEFAULT NOW());
+CREATE TABLE inventory_order_operations (order_id INTEGER PRIMARY KEY, closed BOOLEAN NOT NULL DEFAULT FALSE);

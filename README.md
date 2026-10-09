@@ -8,105 +8,23 @@ The system is composed of independently deployable services with database-per-se
 
 ## Architecture
 
-```text
-                           ┌──────────────────────┐
-                           │       Client         │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-                           ┌──────────────────────┐
-                           │     API Gateway      │
-                           │      Port 8080       │
-                           └──────────┬───────────┘
-                                      │
-             ┌────────────────────────┼────────────────────────┐
-             │                        │                        │
-             ▼                        ▼                        ▼
-     ┌───────────────┐        ┌───────────────┐        ┌───────────────┐
-     │ Auth Service  │        │Catalog Service│        │ Cart Service  │
-     │    :4000      │        │    :4001      │        │    :4002      │
-     └───────┬───────┘        └───────┬───────┘        └───────┬───────┘
-             │                        │                        │
-             ▼                        ▼                        ▼
-        PostgreSQL              PostgreSQL + ES              Redis
-
-
-                           ┌──────────────────────┐
-                           │     Orders Service   │
-                           │        :4003         │
-                           └──────────┬───────────┘
-                                      │
-                                      │ order_placed
-                                      ▼
-                           ┌──────────────────────┐
-                           │      RabbitMQ        │
-                           │    app.events        │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-                           ┌──────────────────────┐
-                           │   Payments Service   │
-                           │        :4004         │
-                           └──────────┬───────────┘
-                                      │
-                                      │ payment_processed
-                                      │ refund_processed
-                                      ▼
-                           ┌──────────────────────┐
-                           │     Orders Service   │
-                           └──────────────────────┘
+```mermaid
+flowchart LR
+ Gateway --> Auth
+ Gateway --> Catalog
+ Gateway --> Cart
+ Gateway --> Orders
+ Orders -->|outbox commands| RabbitMQ
+ RabbitMQ --> Inventory
+ RabbitMQ --> Payments
+ Inventory -->|outbox results| RabbitMQ
+ Payments -->|outbox results| RabbitMQ
+ RabbitMQ -->|inbox results| Orders
 ```
 
----
+Catalog owns product metadata and Elasticsearch search. Inventory owns its PostgreSQL stock and reservation database. Payments owns payments and refunds. Orders coordinates the Saga through the durable `app.events` direct exchange. Cart uses Redis; Gateway preserves Auth0 authentication.
 
-## Services
-
-| Service          | Port | Responsibility                                   | Storage                    |
-| ---------------- | ---: | ------------------------------------------------ | -------------------------- |
-| Gateway          | 8080 | API gateway, Auth0 login, routing, rate limiting | None                       |
-| Auth Service     | 4000 | User management and Auth0 identity mapping       | PostgreSQL                 |
-| Catalog Service  | 4001 | Products, search, inventory reservations         | PostgreSQL + Elasticsearch |
-| Cart Service     | 4002 | Shopping carts and catalog validation            | Redis                      |
-| Orders Service   | 4003 | Order creation, cancellation, order state        | PostgreSQL                 |
-| Payments Service | 4004 | Payments, refunds, inventory coordination        | PostgreSQL                 |
-| RabbitMQ         | 5672 | Asynchronous event messaging                     | Persistent volume          |
-| Elasticsearch    | 9200 | Product search and structured logs               | Persistent volume          |
-
----
-
-## Key Features
-
-* Microservices architecture
-* Database-per-service isolation
-* API Gateway
-* Auth0 authentication and authorization
-* Role-based access control and permission-based authorization
-* OAuth 2.0 / OpenID Connect login flow
-* HttpOnly access-token cookie
-* Synchronous HTTP communication
-* Asynchronous RabbitMQ event-driven communication
-* Durable direct RabbitMQ exchange
-* Transactional outbox pattern
-* Idempotent payment and refund processing
-* PostgreSQL advisory locks
-* Inventory reservations
-* Reservation expiration
-* Transactional inventory restoration during refunds
-* Payment and refund workflows
-* Retry handling
-* Dead-letter queues
-* Redis-based cart storage
-* Elasticsearch product search
-* Structured logging
-* Docker Compose
-* Kubernetes deployment
-* Health checks and readiness probes
-* Resource requests and limits
-* Non-root Kubernetes containers
-* Dropped Linux capabilities
-* CI-based automated testing
-
----
+See [Phase 2 contracts, states, tests and recovery](docs/phase2.md).
 
 # Authentication and Authorization
 
@@ -248,55 +166,7 @@ Payment completion and refund completion are also published as events.
 
 # Order and Payment Workflow
 
-The order workflow is event-driven.
-
-```text
-1. Client creates order
-          |
-          v
-2. Orders Service
-   - validates request
-   - inserts order
-   - inserts outbox event
-   - commits transaction
-          |
-          v
-3. Outbox Poller
-   publishes order_placed
-          |
-          v
-4. RabbitMQ app.events
-          |
-          v
-5. Payments Service
-   - receives order_placed
-   - reserves inventory
-   - processes payment
-          |
-          +----------------------+
-          |                      |
-       success                 failure
-          |                      |
-          v                      v
- confirm inventory         release inventory
-          |
-          v
- publish payment_processed
-          |
-          v
- Orders Service
-          |
-          v
- mark order successful
-```
-
-The Orders database transaction does not directly reserve inventory.
-
-Inventory reservation occurs asynchronously in the payment workflow after the `order_placed` event is consumed.
-
-This keeps the Orders database transaction independent from downstream payment and inventory operations.
-
----
+Success follows PENDING → STOCK_RESERVED → PAYMENT_AUTHORIZED → CONFIRMED. Failed payment waits for inventory compensation; paid cancellation waits for refund and inactive inventory verification. See [Phase 2](docs/phase2.md).
 
 # Transactional Outbox
 
@@ -444,74 +314,7 @@ same order
 
 # Inventory Management
 
-Inventory is managed by the Catalog Service.
-
-Products contain stock information, while inventory reservations are stored separately.
-
-Reservation states include:
-
-```text
-confirmed
-refunded
-```
-
-The payment workflow coordinates inventory using internal service APIs.
-
-```text
-order_placed
-     |
-     v
-reserve stock
-     |
-     v
-process payment
-     |
-     +---- success ----> confirm reservation
-     |
-     +---- failure ----> release reservation
-```
-
-Reservations can expire automatically if they remain unresolved.
-
-The expiration worker periodically checks for expired reservations.
-
-Configuration includes:
-
-```text
-RESERVATION_EXPIRATION_MINUTES
-INVENTORY_EXPIRATION_INTERVAL_MS
-```
-
----
-
-# Refund and Inventory Restoration
-
-Refund processing also coordinates inventory restoration.
-
-```text
-Refund Request
-      |
-      v
-Payments Service
-      |
-      v
-Catalog Service
-      |
-      v
-Lock reservation
-      |
-      v
-Restore product stock
-      |
-      v
-Mark reservation refunded
-```
-
-The Catalog Service performs the inventory restoration inside a database transaction.
-
-This ensures that the stock update and reservation status change are committed together.
-
----
+Inventory Service exclusively owns available stock, reservations, expiration and restoration. Order advisory locks serialize confirmation, expiration and release. Payments does not call inventory APIs. See [Phase 2](docs/phase2.md).
 
 # Payments
 
@@ -1072,98 +875,7 @@ Potential future work includes:
 
 # Example End-to-End Flow
 
-A successful order can follow this path:
-
-```text
-Client
-  |
-  v
-Gateway
-  |
-  v
-Orders Service
-  |
-  +--> PostgreSQL
-  |      |
-  |      +--> Order
-  |      +--> Outbox Event
-  |
-  v
-Outbox Poller
-  |
-  v
-RabbitMQ
-  |
-  | order_placed
-  v
-Payments Service
-  |
-  +--> Catalog Service
-  |      |
-  |      +--> Reserve Inventory
-  |
-  +--> Payment Processing
-  |
-  +--> PostgreSQL
-  |      |
-  |      +--> Payment
-  |      +--> Outbox Event
-  |
-  v
-RabbitMQ
-  |
-  | payment_processed
-  v
-Orders Service
-  |
-  v
-Order marked successful
-```
-
-For a failed payment:
-
-```text
-order_placed
-     |
-     v
-Payments Service
-     |
-     +--> reserve inventory
-     |
-     +--> payment fails
-     |
-     v
-release inventory
-     |
-     v
-payment failure handling
-```
-
-For a refund:
-
-```text
-Refund Request
-      |
-      v
-Payments Service
-      |
-      v
-Refund Processing
-      |
-      v
-Catalog Service
-      |
-      v
-Restore Inventory
-      |
-      v
-refund_processed
-      |
-      v
-Orders Service
-```
-
----
+Orders creates an order and a reservation command atomically. Inventory reserves stock and emits inventory_reserved. Orders requests payment, handles payment_processed, requests inventory confirmation and completes only after inventory_confirmed. Compensation uses refunds and release verification. See [Phase 2](docs/phase2.md).
 
 # Engineering Goals
 

@@ -24,6 +24,8 @@ async function getChannel() {
   }
 
   channel = await connection.createConfirmChannel();
+  channel.on('error',()=>{channel=null;});
+  channel.on('close',()=>{channel=null;});
 
   await channel.assertExchange(EVENTS_EXCHANGE, 'direct', {
     durable: true,
@@ -34,28 +36,12 @@ async function getChannel() {
 
 async function publishEvent(eventType, payload) {
   const ch = await getChannel();
-
-  return new Promise((resolve, reject) => {
-    ch.publish(
-      EVENTS_EXCHANGE,
-      eventType,
-      Buffer.from(JSON.stringify(payload)),
-      {
-        persistent: true,
-        contentType: 'application/json',
-      },
-      (err) => {
-        if (err) {
-          return reject(err);
-        }
-
-        resolve();
-      }
-    );
-  });
+  return require('./publishConfirmed').publishConfirmed(ch,eventType,payload);
 }
 
+async function closeRabbitMQ() {if(connection)await connection.close();connection=null;channel=null;}
 module.exports = {
+  closeRabbitMQ,
   EVENTS_EXCHANGE,
   getChannel,
   publishEvent,

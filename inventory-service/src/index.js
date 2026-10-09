@@ -1,3 +1,4 @@
+let server, startupTimer, shuttingDown=false;
 const app = require('./app');
 const {
   startInventoryExpirationWorker,
@@ -10,11 +11,13 @@ const {
 const PORT = process.env.PORT || 4005;
 
 async function start() {
-  app.listen(PORT, () => {
+  if(shuttingDown)return;
+  server = app.listen(PORT, () => {
     console.log(`Inventory service running on port ${PORT}`);
 
     startInventoryExpirationWorker();
-    startOutboxPoller();
+    if(shuttingDown)return;
+  startOutboxPoller();
   });
 
   try {
@@ -37,3 +40,14 @@ async function start() {
 }
 
 start();
+async function shutdown(){
+ if(shuttingDown)return;shuttingDown=true;clearTimeout(startupTimer);
+ await require('./outboxPoller').stopOutboxPoller();
+ await require("./inventoryExpiration").stopInventoryExpirationWorker();
+ await require("./consumer").stopInventoryConsumer();
+ if(server)await new Promise(resolve=>server.close(resolve));
+ await require('./rabbitmq').closeRabbitMQ();
+ await require('./db').end();
+ require('./logger').close();
+}
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>shutdown().catch(()=>{process.exitCode=1;}));

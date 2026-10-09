@@ -125,21 +125,17 @@ async function main() {
   const ordersDbPassword = await ask('Orders DB password: ', true);
   const paymentsDbPassword = await ask('Payments DB password: ', true);
 
-  const rabbitmqUsername = await ask('RabbitMQ username: ');
-  const rabbitmqPassword = await ask('RabbitMQ password: ', true);
-
-  if (!rabbitmqUsername) {
-    throw new Error('RabbitMQ username cannot be empty.');
+  const brokerUsername = await ask('Existing RabbitMQ bootstrap username (broker only): ');
+  const brokerPassword = await ask('Existing RabbitMQ bootstrap password (broker only): ', true);
+  const ordersAppPassword = await ask('Orders restricted database role password: ', true);
+  const paymentsAppPassword = await ask('Payments restricted database role password: ', true);
+  const serviceUrls = {username: brokerUsername, password: brokerPassword};
+  for (const service of ['orders','payments','inventory']) {
+    const value = await ask(`${service} RabbitMQ URL (restricted service account): `, true);
+    const parsed = new URL(value);
+    if (decodeURIComponent(parsed.username) !== `${service}_app` || !parsed.password) throw new Error(`Expected ${service}_app credentials`);
+    serviceUrls[`${service}-url`] = value;
   }
-
-  if (!rabbitmqPassword) {
-    throw new Error('RabbitMQ password cannot be empty.');
-  }
-
-  const rabbitmqUrl =
-    `amqp://${encodeURIComponent(rabbitmqUsername)}` +
-    `:${encodeURIComponent(rabbitmqPassword)}` +
-    '@rabbitmq:5672';
 
   applySecret('auth-db-secret', {
     POSTGRES_USER: 'auth_user',
@@ -193,6 +189,7 @@ async function main() {
   });
 
   applySecret('orders-service-secret', {
+    DB_USER: 'orders_app', DB_PASSWORD: ordersAppPassword, DB_NAME: 'orders_db',
     JWT_CURRENT_SECRET: jwtCurrentSecret,
     JWT_PREVIOUS_SECRET: jwtPreviousSecret,
   });
@@ -203,11 +200,9 @@ async function main() {
     POSTGRES_DB: 'payments_db',
   });
 
-  applySecret('rabbitmq-secret', {
-    username: rabbitmqUsername,
-    password: rabbitmqPassword,
-    url: rabbitmqUrl,
-  });
+  applySecret('payments-service-secret', {DB_USER:'payments_app',DB_PASSWORD:paymentsAppPassword,DB_NAME:'payments_db'});
+
+  applySecret('rabbitmq-secret', serviceUrls);
 
   applySecret('internal-service-secret', {
     INTERNAL_SERVICE_KEY: internalServiceKey,

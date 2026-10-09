@@ -1,3 +1,4 @@
+const fixtureDb=process.env.PHASE2_INTEGRATION==='true' ? require('../../scripts/phase2/test-support/admin-db')('payments',require('pg')) : require('../src/db');
 jest.mock('../src/rabbitmq', () => ({
   getChannel: jest.fn(),
   connectRabbitMQ: jest.fn(),
@@ -17,13 +18,14 @@ describe('payments outbox poller', () => {
 
   beforeEach(async () => {
     mockChannel = {
+      on: jest.fn(), removeListener: jest.fn(),
       publish: jest.fn(),
       waitForConfirms: jest.fn().mockResolvedValue(),
     };
 
     client = await pool.connect();
 
-    await client.query('DELETE FROM outbox_events');
+    await fixtureDb.query('DELETE FROM outbox_events');
 
     getChannel.mockReset();
     connectRabbitMQ.mockReset();
@@ -56,7 +58,7 @@ describe('payments outbox poller', () => {
       'app.events',
       'payment_processed',
       expect.any(Buffer),
-      { persistent: true }
+      expect.objectContaining({ persistent: true, mandatory: true })
     );
 
     expect(mockChannel.waitForConfirms).toHaveBeenCalled();
@@ -154,7 +156,7 @@ describe('payments outbox poller', () => {
       'app.events',
       'payment_processed',
       expect.any(Buffer),
-      { persistent: true }
+      expect.objectContaining({ persistent: true, mandatory: true })
     );
 
     expect(mockChannel.waitForConfirms).toHaveBeenCalled();
@@ -246,10 +248,13 @@ describe('payments outbox poller', () => {
       'app.events',
       'payment_processed',
       expect.any(Buffer),
-      { persistent: true }
+      expect.objectContaining({ persistent: true, mandatory: true })
     );
 
     expect(mockChannel.waitForConfirms).toHaveBeenCalled();
   });
 
 });
+afterAll(() => pool.end());
+
+if(process.env.PHASE2_INTEGRATION==='true')afterAll(()=>fixtureDb.end());

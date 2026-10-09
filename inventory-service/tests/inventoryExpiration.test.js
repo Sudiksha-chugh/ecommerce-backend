@@ -173,3 +173,5 @@ describe('Inventory expiration worker', () => {
     }
   });
 });
+
+afterAll(() => pool.end());

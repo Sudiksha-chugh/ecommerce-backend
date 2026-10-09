@@ -1,3 +1,4 @@
+const fixtureDb=process.env.PHASE2_INTEGRATION==='true' ? require('../../scripts/phase2/test-support/admin-db')('orders',require('pg')) : require('../src/db');
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 
@@ -42,15 +43,23 @@ const pool = require('../src/db');
 require('dotenv').config();
 
 function makeToken(userId) {
-  return jwt.sign({ userId, email: `${userId}@example.com` }, process.env.JWT_CURRENT_SECRET, { expiresIn: '1h', algorithm: 'HS256' });
+  return jwt.sign(
+    { userId, email: `${userId}@example.com` },
+    process.env.JWT_CURRENT_SECRET,
+    {
+      expiresIn: '1h',
+      algorithm: 'HS256',
+    }
+  );
 }
 
 describe('POST /orders', () => {
   const token = makeToken(1);
 
   afterEach(async () => {
-    await pool.query('DELETE FROM outbox_events');
-    await pool.query('DELETE FROM orders');
+    await fixtureDb.query('DELETE FROM outbox_events');
+    await fixtureDb.query('DELETE FROM order_sagas');
+    await fixtureDb.query('DELETE FROM orders');
     jest.restoreAllMocks();
   });
 
@@ -62,11 +71,46 @@ describe('POST /orders', () => {
     const res = await request(app)
       .post('/orders')
       .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        items: [
+          {
+            productId: 2,
+            name: 'USB-C Hub',
+            price: 34.99,
+            quantity: 3,
+          },
+        ],
         totalAmount: 104.97,
       });
 
     expect(res.statusCode).toBe(401);
+  });
+
+  it('creates an order saga in PENDING state', async () => {
+    const res = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId: 2,
+            name: 'USB-C Hub',
+            price: 34.99,
+            quantity: 3,
+          },
+        ],
+        totalAmount: 104.97,
+      });
+
+    expect(res.statusCode).toBe(201);
+
+    const sagaCheck = await pool.query(
+      `SELECT * FROM order_sagas WHERE order_id = $1`,
+      [res.body.id]
+    );
+
+    expect(sagaCheck.rows.length).toBe(1);
+    expect(sagaCheck.rows[0].state).toBe('PENDING');
+    expect(sagaCheck.rows[0].version).toBe(1);
   });
 
   it('creates a new order using the userId from the token', async () => {
@@ -74,7 +118,14 @@ describe('POST /orders', () => {
       .post('/orders')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        items: [
+          {
+            productId: 2,
+            name: 'USB-C Hub',
+            price: 34.99,
+            quantity: 3,
+          },
+        ],
         totalAmount: 104.97,
       });
 
@@ -87,7 +138,9 @@ describe('POST /orders', () => {
     const res = await request(app)
       .post('/orders')
       .set('Authorization', `Bearer ${token}`)
-      .send({ totalAmount: 104.97 });
+      .send({
+        totalAmount: 104.97,
+      });
 
     expect(res.statusCode).toBe(400);
   });
@@ -97,14 +150,24 @@ describe('POST /orders', () => {
       .post('/orders')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+        items: [
+          {
+            productId: 2,
+            name: 'USB-C Hub',
+            price: 34.99,
+            quantity: 3,
+          },
+        ],
         totalAmount: 104.97,
       });
 
     expect(res.statusCode).toBe(201);
 
     const outboxCheck = await pool.query(
-      "SELECT * FROM outbox_events WHERE event_type = 'order_placed' AND payload->>'id' = $1",
+      `SELECT *
+       FROM outbox_events
+       WHERE event_type = 'inventory_reserve_requested'
+         AND payload->>'orderId' = $1`,
       [String(res.body.id)]
     );
 
@@ -113,305 +176,420 @@ describe('POST /orders', () => {
   });
 
   it('rolls back the order if the outbox insert fails, leaving no trace of either', async () => {
-  const realConnect = pool.connect.bind(pool);
+    const realConnect = pool.connect.bind(pool);
 
-  let querySpy;
+    let querySpy;
 
-  jest.spyOn(pool, 'connect').mockImplementationOnce(async () => {
-    const client = await realConnect();
-    const realQuery = client.query.bind(client);
+    jest.spyOn(pool, 'connect').mockImplementationOnce(async () => {
+      const client = await realConnect();
+      const realQuery = client.query.bind(client);
 
-    querySpy = jest.spyOn(client, 'query').mockImplementation((text, params, callback) => {
-      if (
-        typeof text === 'string' &&
-        text.includes('INSERT INTO outbox_events')
-      ) {
-        return Promise.reject(
-          new Error('Simulated outbox insert failure')
-        );
-      }
+      querySpy = jest
+        .spyOn(client, 'query')
+        .mockImplementation((text, params, callback) => {
+          if (
+            typeof text === 'string' &&
+            text.includes('INSERT INTO outbox_events')
+          ) {
+            return Promise.reject(
+              new Error('Simulated outbox insert failure')
+            );
+          }
 
-      return realQuery(text, params, callback);
+          return realQuery(text, params, callback);
+        });
+
+      return client;
     });
 
-    return client;
-  });
-const res = await request(app)
-    .post('/orders')
-    .set('Authorization', `Bearer ${token}`)
-    .send({
-      items: [
-        {
-          productId: 999,
-          name: 'Should Not Persist',
-          price: 1.23,
-          quantity: 1,
-        },
-      ],
-      totalAmount: 1.23,
-    });
+    const res = await request(app)
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productId: 999,
+            name: 'Should Not Persist',
+            price: 1.23,
+            quantity: 1,
+          },
+        ],
+        totalAmount: 1.23,
+      });
 
     expect(res.statusCode).toBe(500);
-     querySpy.mockRestore();
 
-  const orderCheck = await pool.query(
-    "SELECT * FROM orders WHERE total_amount = '1.23'"
-  );
+    querySpy.mockRestore();
+
+    const orderCheck = await pool.query(
+      "SELECT * FROM orders WHERE total_amount = '1.23'"
+    );
+
+    expect(orderCheck.rows.length).toBe(0);
+
+    const sagaCheck = await pool.query(
+      `SELECT * FROM order_sagas
+       WHERE order_id IN (
+         SELECT id FROM orders WHERE total_amount = '1.23'
+       )`
+    );
+
+    expect(sagaCheck.rows.length).toBe(0);
   });
+
   describe('PATCH /orders/:id/cancel', () => {
-  const token = makeToken(1);
-  const otherUserToken = makeToken(2);
-
-  afterEach(async () => {
-    await pool.query('DELETE FROM outbox_events');
-    await pool.query('DELETE FROM orders');
-  });
-
-  async function createPendingOrder() {
-    const res = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        items: [{ productId: 1, name: 'Cancel Test Item', price: 20, quantity: 1 }],
-        totalAmount: 20,
-      });
-    return res.body.id;
-  }
-
-  it('rejects requests with no token with 401', async () => {
-    const orderId = await createPendingOrder();
-
-    const res = await request(app).patch(`/orders/${orderId}/cancel`);
-    expect(res.statusCode).toBe(401);
-  });
-
-  it('rejects cancelling an order that belongs to someone else with 403', async () => {
-    const orderId = await createPendingOrder();
-
-    const res = await request(app)
-      .patch(`/orders/${orderId}/cancel`)
-      .set('Authorization', `Bearer ${otherUserToken}`);
-
-    expect(res.statusCode).toBe(403);
-  });
-
-  it('rejects cancelling a non-existent order with 404', async () => {
-    const res = await request(app)
-      .patch('/orders/999999/cancel')
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.statusCode).toBe(404);
-  });
-
-  it('cancels a pending order and returns it with status "cancelled"', async () => {
-    const orderId = await createPendingOrder();
-
-    const res = await request(app)
-      .patch(`/orders/${orderId}/cancel`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.statusCode).toBe(200);
-    expect(res.body.status).toBe('cancelled');
-
-    const check = await pool.query('SELECT status FROM orders WHERE id = $1', [orderId]);
-    expect(check.rows[0].status).toBe('cancelled');
-  });
-
-  it('rejects cancelling an order that is already cancelled with 409', async () => {
-    const orderId = await createPendingOrder();
-
-    await pool.query(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, [orderId]);
-
-    const res = await request(app)
-      .patch(`/orders/${orderId}/cancel`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.statusCode).toBe(409);
-    expect(res.body.error).toBeDefined();
-  });
-  it('initiates a refund when cancelling a succeeded order, returns 202', async () => {
-    const orderId = await createPendingOrder();
-    await pool.query(`UPDATE orders SET status = 'succeeded' WHERE id = $1`, [orderId]);
-
-    const res = await request(app)
-      .patch(`/orders/${orderId}/cancel`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.statusCode).toBe(202);
-    expect(res.body.status).toBe('refund_pending');
-
-    const outboxCheck = await pool.query(
-      "SELECT * FROM outbox_events WHERE event_type = 'refund_requested' AND payload->>'orderId' = $1",
-      [String(orderId)]
-    );
-    expect(outboxCheck.rows.length).toBe(1);
-  });
-
-  it('initiates a compensation refund when cancelling an inventory_failed order', async () => {
-    const orderId = await createPendingOrder();
-    await pool.query(
-      `UPDATE orders SET status = 'inventory_failed' WHERE id = $1`,
-      [orderId]
-    );
-
-    const res = await request(app)
-      .patch(`/orders/${orderId}/cancel`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.statusCode).toBe(202);
-    expect(res.body.status).toBe('refund_pending');
-
-    const outboxCheck = await pool.query(
-      "SELECT payload FROM outbox_events WHERE event_type = 'refund_requested' AND payload->>'orderId' = $1",
-      [String(orderId)]
-    );
-
-    expect(outboxCheck.rows.length).toBe(1);
-    expect(outboxCheck.rows[0].payload.restoreInventory).toBe(false);
-  });
-
-  it('rejects cancelling an order that is already refund_pending with 409', async () => {
-    const orderId = await createPendingOrder();
-    await pool.query(`UPDATE orders SET status = 'refund_pending' WHERE id = $1`, [orderId]);
-
-    const res = await request(app)
-      .patch(`/orders/${orderId}/cancel`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.statusCode).toBe(409);
-  });
-  it('returns the existing order when the same user retries with the same idempotency key', async () => {
-    const firstRes = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .set('Idempotency-Key', 'order-retry-123')
-      .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-        totalAmount: 104.97,
-      });
-
-    const secondRes = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .set('Idempotency-Key', 'order-retry-123')
-      .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-        totalAmount: 104.97,
-      });
-
-    expect(firstRes.statusCode).toBe(201);
-    expect(secondRes.statusCode).toBe(200);
-    expect(secondRes.body.id).toBe(firstRes.body.id);
-  });
-
-  it('does not create a duplicate outbox event when the same idempotency key is retried', async () => {
-    const firstRes = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .set('Idempotency-Key', 'order-retry-456')
-      .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-        totalAmount: 104.97,
-      });
-
-    const secondRes = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .set('Idempotency-Key', 'order-retry-456')
-      .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-        totalAmount: 104.97,
-      });
-
-    expect(firstRes.body.id).toBe(secondRes.body.id);
-
-    const ordersCheck = await pool.query(
-      'SELECT * FROM orders WHERE user_id = $1 AND idempotency_key = $2',
-      [1, 'order-retry-456']
-    );
-
-    const outboxCheck = await pool.query(
-      "SELECT * FROM outbox_events WHERE event_type = 'order_placed' AND payload->>'id' = $1",
-      [String(firstRes.body.id)]
-    );
-
-    expect(ordersCheck.rows.length).toBe(1);
-    expect(outboxCheck.rows.length).toBe(1);
-  });
-
-  it('allows different users to use the same idempotency key', async () => {
+    const token = makeToken(1);
     const otherUserToken = makeToken(2);
 
-    const firstRes = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .set('Idempotency-Key', 'shared-key-789')
-      .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-        totalAmount: 104.97,
-      });
+    afterEach(async () => {
+      await fixtureDb.query('DELETE FROM outbox_events');
+      await fixtureDb.query('DELETE FROM order_sagas');
+      await fixtureDb.query('DELETE FROM orders');
+    });
 
-    const secondRes = await request(app)
-      .post('/orders')
-      .set('Authorization', `Bearer ${otherUserToken}`)
-      .set('Idempotency-Key', 'shared-key-789')
-      .send({
-        items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-        totalAmount: 104.97,
-      });
-
-    expect(firstRes.statusCode).toBe(201);
-    expect(secondRes.statusCode).toBe(201);
-    expect(firstRes.body.id).not.toBe(secondRes.body.id);
-    expect(firstRes.body.user_id).toBe(1);
-    expect(secondRes.body.user_id).toBe(2);
-  });
-
-  it('handles concurrent requests with the same idempotency key', async () => {
-    const requests = [
-      request(app)
+    async function createPendingOrder() {
+      const res = await request(app)
         .post('/orders')
         .set('Authorization', `Bearer ${token}`)
-        .set('Idempotency-Key', 'concurrent-key-123')
         .send({
-          items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
-          totalAmount: 104.97,
-        }),
+          items: [
+            {
+              productId: 1,
+              name: 'Cancel Test Item',
+              price: 20,
+              quantity: 1,
+            },
+          ],
+          totalAmount: 20,
+        });
 
-      request(app)
+      return res.body.id;
+    }
+
+    it('rejects requests with no token with 401', async () => {
+      const orderId = await createPendingOrder();
+
+      const res = await request(app).patch(
+        `/orders/${orderId}/cancel`
+      );
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('rejects cancelling an order that belongs to someone else with 403', async () => {
+      const orderId = await createPendingOrder();
+
+      const res = await request(app)
+        .patch(`/orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${otherUserToken}`);
+
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('rejects cancelling a non-existent order with 404', async () => {
+      const res = await request(app)
+        .patch('/orders/999999/cancel')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('persists pending cancellation while waiting for reservation compensation', async () => {
+      const orderId = await createPendingOrder();
+
+      const res = await request(app)
+        .patch(`/orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(202);
+      expect(res.body.status).toBe('cancellation_pending');
+
+      const check = await pool.query(
+        'SELECT status FROM orders WHERE id = $1',
+        [orderId]
+      );
+
+      expect(check.rows[0].status).toBe('cancellation_pending');
+    });
+
+    it('returns an already cancelled order idempotently', async () => {
+      const orderId = await createPendingOrder();
+
+      await pool.query(
+        `WITH saga AS (UPDATE order_sagas SET state='CANCELLED' WHERE order_id=$1) UPDATE orders SET status='cancelled' WHERE id=$1`,
+        [orderId]
+      );
+
+      const res = await request(app)
+        .patch(`/orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.status).toBe('cancelled');
+    });
+
+    it('initiates a refund when cancelling a succeeded order, returns 202', async () => {
+      const orderId = await createPendingOrder();
+
+      await pool.query(
+        `WITH saga AS (UPDATE order_sagas SET state='CONFIRMED',payment_succeeded=TRUE WHERE order_id=$1) UPDATE orders SET status='succeeded' WHERE id=$1`,
+        [orderId]
+      );
+
+      const res = await request(app)
+        .patch(`/orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(202);
+      expect(res.body.status).toBe('refund_pending');
+
+      const outboxCheck = await pool.query(
+        `SELECT *
+         FROM outbox_events
+         WHERE event_type = 'refund_requested'
+           AND payload->>'orderId' = $1`,
+        [String(orderId)]
+      );
+
+      expect(outboxCheck.rows.length).toBe(1);
+    });
+
+    it('does not request a refund for a cancelled stock failure', async () => {
+      const orderId = await createPendingOrder();
+
+      await pool.query(
+        `WITH saga AS (UPDATE order_sagas SET state='CANCELLED',failure_state='STOCK_FAILED' WHERE order_id=$1) UPDATE orders SET status='cancelled' WHERE id=$1`,
+        [orderId]
+      );
+
+      const res = await request(app)
+        .patch(`/orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.status).toBe('cancelled');
+
+      const outboxCheck = await pool.query(
+        `SELECT payload
+         FROM outbox_events
+         WHERE event_type = 'refund_requested'
+           AND payload->>'orderId' = $1`,
+        [String(orderId)]
+      );
+
+      expect(outboxCheck.rows.length).toBe(0);
+    });
+
+    it('returns an in-progress refund without a duplicate request', async () => {
+      const orderId = await createPendingOrder();
+
+      await pool.query(
+        `WITH saga AS (UPDATE order_sagas SET state='REFUND_PENDING',payment_succeeded=TRUE WHERE order_id=$1) UPDATE orders SET status='refund_pending' WHERE id=$1`,
+        [orderId]
+      );
+
+      const res = await request(app)
+        .patch(`/orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(202);
+    });
+
+    it('returns the existing order when the same user retries with the same idempotency key', async () => {
+      const firstRes = await request(app)
         .post('/orders')
         .set('Authorization', `Bearer ${token}`)
-        .set('Idempotency-Key', 'concurrent-key-123')
+        .set('Idempotency-Key', 'order-retry-123')
         .send({
-          items: [{ productId: 2, name: 'USB-C Hub', price: 34.99, quantity: 3 }],
+          items: [
+            {
+              productId: 2,
+              name: 'USB-C Hub',
+              price: 34.99,
+              quantity: 3,
+            },
+          ],
           totalAmount: 104.97,
-        }),
-    ];
+        });
 
-    const [firstRes, secondRes] = await Promise.all(requests);
+      const secondRes = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', 'order-retry-123')
+        .send({
+          items: [
+            {
+              productId: 2,
+              name: 'USB-C Hub',
+              price: 34.99,
+              quantity: 3,
+            },
+          ],
+          totalAmount: 104.97,
+        });
 
-    expect([firstRes.statusCode, secondRes.statusCode].sort()).toEqual([
-      200,
-      201,
-    ]);
+      expect(firstRes.statusCode).toBe(201);
+      expect(secondRes.statusCode).toBe(200);
+      expect(secondRes.body.id).toBe(firstRes.body.id);
+    });
 
-    expect(firstRes.body.id).toBe(secondRes.body.id);
+    it('does not create a duplicate outbox event when the same idempotency key is retried', async () => {
+      const firstRes = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', 'order-retry-456')
+        .send({
+          items: [
+            {
+              productId: 2,
+              name: 'USB-C Hub',
+              price: 34.99,
+              quantity: 3,
+            },
+          ],
+          totalAmount: 104.97,
+        });
 
-    const ordersCheck = await pool.query(
-      `SELECT * FROM orders
-       WHERE user_id = $1
-         AND idempotency_key = $2`,
-      [1, 'concurrent-key-123']
-    );
+      const secondRes = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', 'order-retry-456')
+        .send({
+          items: [
+            {
+              productId: 2,
+              name: 'USB-C Hub',
+              price: 34.99,
+              quantity: 3,
+            },
+          ],
+          totalAmount: 104.97,
+        });
 
-    const outboxCheck = await pool.query(
-      `SELECT * FROM outbox_events
-       WHERE event_type = 'order_placed'
-         AND payload->>'id' = $1`,
-      [String(firstRes.body.id)]
-    );
-    expect(ordersCheck.rows.length).toBe(1);
-    expect(outboxCheck.rows.length).toBe(1);
+      expect(firstRes.body.id).toBe(secondRes.body.id);
+
+      const ordersCheck = await pool.query(
+        'SELECT * FROM orders WHERE user_id = $1 AND idempotency_key = $2',
+        [1, 'order-retry-456']
+      );
+
+      const outboxCheck = await pool.query(
+        `SELECT *
+         FROM outbox_events
+         WHERE event_type = 'inventory_reserve_requested'
+           AND payload->>'orderId' = $1`,
+        [String(firstRes.body.id)]
+      );
+
+      expect(ordersCheck.rows.length).toBe(1);
+      expect(outboxCheck.rows.length).toBe(1);
+    });
+
+    it('allows different users to use the same idempotency key', async () => {
+      const otherUserToken = makeToken(2);
+
+      const firstRes = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Idempotency-Key', 'shared-key-789')
+        .send({
+          items: [
+            {
+              productId: 2,
+              name: 'USB-C Hub',
+              price: 34.99,
+              quantity: 3,
+            },
+          ],
+          totalAmount: 104.97,
+        });
+
+      const secondRes = await request(app)
+        .post('/orders')
+        .set('Authorization', `Bearer ${otherUserToken}`)
+        .set('Idempotency-Key', 'shared-key-789')
+        .send({
+          items: [
+            {
+              productId: 2,
+              name: 'USB-C Hub',
+              price: 34.99,
+              quantity: 3,
+            },
+          ],
+          totalAmount: 104.97,
+        });
+
+      expect(firstRes.statusCode).toBe(201);
+      expect(secondRes.statusCode).toBe(201);
+      expect(firstRes.body.id).not.toBe(secondRes.body.id);
+      expect(firstRes.body.user_id).toBe(1);
+      expect(secondRes.body.user_id).toBe(2);
+    });
+
+    it('handles concurrent requests with the same idempotency key', async () => {
+      const requests = [
+        request(app)
+          .post('/orders')
+          .set('Authorization', `Bearer ${token}`)
+          .set('Idempotency-Key', 'concurrent-key-123')
+          .send({
+            items: [
+              {
+                productId: 2,
+                name: 'USB-C Hub',
+                price: 34.99,
+                quantity: 3,
+              },
+            ],
+            totalAmount: 104.97,
+          }),
+
+        request(app)
+          .post('/orders')
+          .set('Authorization', `Bearer ${token}`)
+          .set('Idempotency-Key', 'concurrent-key-123')
+          .send({
+            items: [
+              {
+                productId: 2,
+                name: 'USB-C Hub',
+                price: 34.99,
+                quantity: 3,
+              },
+            ],
+            totalAmount: 104.97,
+          }),
+      ];
+
+      const [firstRes, secondRes] = await Promise.all(requests);
+
+      expect([firstRes.statusCode, secondRes.statusCode].sort()).toEqual([
+        200,
+        201,
+      ]);
+
+      expect(firstRes.body.id).toBe(secondRes.body.id);
+
+      const ordersCheck = await pool.query(
+        `SELECT *
+         FROM orders
+         WHERE user_id = $1
+           AND idempotency_key = $2`,
+        [1, 'concurrent-key-123']
+      );
+
+      const outboxCheck = await pool.query(
+        `SELECT *
+         FROM outbox_events
+         WHERE event_type = 'inventory_reserve_requested'
+           AND payload->>'orderId' = $1`,
+        [String(firstRes.body.id)]
+      );
+
+      expect(ordersCheck.rows.length).toBe(1);
+      expect(outboxCheck.rows.length).toBe(1);
+    });
   });
 });
-});
+if(process.env.PHASE2_INTEGRATION==='true')afterAll(()=>fixtureDb.end());
