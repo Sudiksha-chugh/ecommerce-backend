@@ -1,3 +1,4 @@
+const fixtureDb=require('../../scripts/phase2/test-support/admin-db')('inventory',require('pg'));
 const pool = require("../src/db");
 const {
   pollOnce,
@@ -9,7 +10,7 @@ const rabbitmq = require("../src/rabbitmq");
 
 describe("Inventory Outbox Poller", () => {
   beforeEach(async () => {
-    await pool.query("DELETE FROM outbox_events");
+    await fixtureDb.query("DELETE FROM outbox_events");
 
     jest.clearAllMocks();
   });
@@ -275,3 +276,4 @@ describe("Inventory Outbox Poller", () => {
     expect(event.rows[0].published_at).not.toBeNull();
   });
 });
+afterAll(()=>fixtureDb.end());

@@ -3,5 +3,10 @@ node_modules/
 *.log
 .DS_Store
 dist/
-k8s/secrets/
-docs
+k8s/secrets
+
+# Local generated credential artifacts (never commit).
+.env.phase2-tmp
+.env.phase21*
+ecommerce-phase21-test-*/
+.phase21-test-secrets/

@@ -1,3 +1,7 @@
+const testConfig=require('../../scripts/phase2/test-support/test-config');
+Object.assign(process.env,testConfig.applicationEnvironment('payments'),{TEST_SERVICE:'payments'});
+jest.mock('dotenv',()=>({config:jest.fn(()=>({parsed:{}}))}));
+testConfig.guardApplicationPool('payments',jest.requireActual('../src/db'));
 const fixtureDb=process.env.PHASE2_INTEGRATION==='true' ? require('../../scripts/phase2/test-support/admin-db')('payments',require('pg')) : require('../src/db');
 jest.mock('../src/rabbitmq', () => ({
   getChannel: jest.fn(),

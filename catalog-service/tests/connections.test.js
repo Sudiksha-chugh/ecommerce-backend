@@ -14,5 +14,6 @@ describe('database connections', () => {
 
   afterAll(async () => {
     await pool.end();
+    await esClient.close();
   });
 });

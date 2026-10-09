@@ -1,9 +1,4 @@
-const {execFileSync}=require('child_process');
-for(const service of ['orders','payments']){
- const role=`${service}_app`;
- const args=['exec',`${service}-db`,'psql','-U','postgres','-d',`${service}_db`,'-tAc'];
- const sql=execFileSync('docker',[...args,`SELECT format('GRANT %s ON TABLE %I TO %I;',string_agg(privilege_type,','),table_name,grantee) FROM information_schema.role_table_grants WHERE grantee='${role}' AND table_schema='public' GROUP BY table_name,grantee;`],{encoding:'utf8'});
- const sequences=execFileSync('docker',[...args,`SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I TO ${role};',sequencename) FROM pg_sequences WHERE schemaname='public' AND has_sequence_privilege('${role}',sequencename,'USAGE');`],{encoding:'utf8'});
- execFileSync('docker',['exec','-i',`${service}-db`,'psql','-v','ON_ERROR_STOP=1','-U','postgres','-d',`${service}_phase2_test`],{input:`BEGIN;${sql}${sequences}COMMIT;`,stdio:['pipe','pipe','pipe']});
- console.log(`${service}: production table and sequence grants mirrored to isolated test database`);
-}
+// Compatibility entry point: explicit test grants, no development-grant reads.
+const {loadTestConfig}=require('./test-support/test-config');
+const {verifyStack,connect,applyTestGrants}=require('./prepare-test-databases');
+(async()=>{const config=loadTestConfig();verifyStack(config);for(const [service,spec]of Object.entries(config.services)){const client=await connect(spec);try{const marker=(await client.query('SELECT service,database_oid::text FROM public.phase21_test_provenance WHERE singleton=TRUE')).rows[0];const oid=(await client.query('SELECT oid::text FROM pg_database WHERE datname=current_database()')).rows[0].oid;if(marker?.service!==service||marker.database_oid!==oid)throw new Error('Test provenance mismatch');await applyTestGrants(client,service,spec);}finally{await client.end();}}console.log('Explicit restricted grants applied only to the dedicated test stack');})().catch(error=>{console.error('Test grant provisioning failed:',error.code||'validation-error');process.exitCode=1;});

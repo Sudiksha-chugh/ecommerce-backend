@@ -1,3 +1,4 @@
+const fixtureDb=require('../../scripts/phase2/test-support/admin-db')('catalog',require('pg'));
 jest.mock('../src/middleware/auth0', () => {
   return (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -29,14 +30,13 @@ const app = require('../src/app');
 const pool = require('../src/db');
 const esClient = require('../src/es');
 
-require('dotenv').config();
 
 const token = 'test-admin-token';
 const customerToken = 'test-customer-token';
 
 describe('POST /products', () => {
   afterEach(async () => {
-    await pool.query('DELETE FROM products');
+    await fixtureDb.query('DELETE FROM products');
 
     await esClient
       .deleteByQuery({
@@ -166,7 +166,7 @@ describe('GET /products/:id', () => {
   });
 
   afterEach(async () => {
-    await pool.query('DELETE FROM products');
+    await fixtureDb.query('DELETE FROM products');
   });
 
   it('returns the product for a valid ID', async () => {
@@ -193,7 +193,7 @@ describe('GET /products/:id', () => {
 
 describe('GET /products/search', () => {
   afterEach(async () => {
-    await pool.query('DELETE FROM products');
+    await fixtureDb.query('DELETE FROM products');
 
     await esClient
       .deleteByQuery({
@@ -289,3 +289,4 @@ describe('GET /products/search', () => {
     expect(res.statusCode).toBe(400);
   });
 });
+afterAll(async()=>{await fixtureDb.end();await pool.end();await esClient.close();require('../src/logger').close();});

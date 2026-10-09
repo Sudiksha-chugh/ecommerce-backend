@@ -1,15 +1,15 @@
 // Cross-service integration is opt-in and uses the isolated local harness.
 if (process.env.PHASE2_INTEGRATION === 'true') {
-const config=require('../../inventory-service/node_modules/dotenv').config({path:require("path").resolve(__dirname,"../../.env"),quiet:true}).parsed;
+const testConfig=require('../../scripts/phase2/test-support/test-config');
 const ordersPool=require('../src/db');
 const {processSagaEvent}=require('../src/sagaStore');
 const saved={...process.env};
-Object.assign(process.env,{DB_PORT:'5437',DB_USER:'inventory_user',DB_PASSWORD:config.INVENTORY_DB_PASSWORD,DB_NAME:'inventory_db',DB_NAME_TEST:'inventory_phase2_test'});
-const inventoryPool=require('../../inventory-service/src/db');
+Object.assign(process.env,testConfig.applicationEnvironment('inventory'));
+const inventoryPool=testConfig.guardApplicationPool('inventory',require('../../inventory-service/src/db'));
 const inventory=require('../../inventory-service/src/inventoryService');
 const {releaseExpiredReservations}=require('../../inventory-service/src/inventoryExpiration');
-Object.assign(process.env,{DB_PORT:'5436',DB_USER:'payments_app',DB_PASSWORD:config.PAYMENTS_APP_DB_PASSWORD,DB_NAME:'payments_db',DB_NAME_TEST:'payments_phase2_test'});
-const paymentsPool=require('../../payments-service/src/db');
+Object.assign(process.env,testConfig.applicationEnvironment('payments'));
+const paymentsPool=testConfig.guardApplicationPool('payments',require('../../payments-service/src/db'));
 const {processRequest}=require('../../payments-service/src/paymentStore');
 Object.assign(process.env,saved);
 const fixturePools=['orders','inventory','payments'].map(name=>require('../../scripts/phase2/test-support/admin-db')(name,require('pg')));
@@ -38,7 +38,7 @@ async function drain(){
 beforeEach(async()=>{
  for(const pool of [ordersPool,inventoryPool,paymentsPool]){
   const db=(await pool.query('SELECT current_database() AS name')).rows[0].name;
-  if(!db.endsWith('_phase2_test'))throw new Error('Unsafe database');
+  if(!db.endsWith('_phase21_test'))throw new Error('Unsafe database');
  }
  await fixturePools[0].query('TRUNCATE orders,order_sagas,inbox_events,outbox_events RESTART IDENTITY CASCADE');
  await fixturePools[1].query('TRUNCATE inventory,reservations,inbox_events,inventory_order_operations,outbox_events RESTART IDENTITY');
@@ -66,7 +66,7 @@ test('cancellation before reserve handles in-flight reservation',async()=>{
 });
 test('successful payment after expiration compensates without new reservation',async()=>{
  const reserve=(await ordersPool.query('SELECT payload FROM outbox_events')).rows[0].payload;
- await inventory.reserveInventory(reserve);await inventoryPool.query("UPDATE reservations SET expires_at=NOW()-INTERVAL '1 minute'");await releaseExpiredReservations();
+ await inventory.reserveInventory(reserve);await fixturePools[1].query("UPDATE reservations SET expires_at=NOW()-INTERVAL '1 minute'");await releaseExpiredReservations();
  await ordersPool.query('UPDATE outbox_events SET published=TRUE');await drain();
  expect((await state()).state).toBe('CANCELLED');expect(await stock()).toBe(10);expect((await inventoryPool.query('SELECT status FROM reservations')).rows[0].status).toBe('EXPIRED');expect((await paymentsPool.query('SELECT * FROM refunds')).rows).toHaveLength(1);
 });
@@ -85,7 +85,7 @@ test('redelivered reserve, payment and results retain durable deduplication',asy
 });
 test('confirmation and expiration race has a consistent outcome',async()=>{
  const reserve=(await ordersPool.query('SELECT payload FROM outbox_events')).rows[0].payload;await inventory.reserveInventory(reserve);
- await inventoryPool.query("UPDATE reservations SET expires_at=NOW()-INTERVAL '1 minute'");
+ await fixturePools[1].query("UPDATE reservations SET expires_at=NOW()-INTERVAL '1 minute'");
  const [confirmation]=await Promise.all([inventory.confirmInventory({orderId,eventId:'confirm-race'}),releaseExpiredReservations()]);
  expect(confirmation.confirmed).toBe(false);expect(await stock()).toBe(10);expect((await inventoryPool.query('SELECT status FROM reservations')).rows[0].status).toBe('EXPIRED');
 });

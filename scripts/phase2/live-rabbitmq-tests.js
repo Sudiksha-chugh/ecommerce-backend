@@ -1,6 +1,9 @@
 // Opt-in live broker suite. No runtime DBs or vhost '/' are accessed.
 const assert=require('assert/strict');const {execFileSync,fork}=require('child_process');const crypto=require('crypto');const path=require('path');
-const config=require('../../orders-service/node_modules/dotenv').config({quiet:true}).parsed;
+const testConfig=require('./test-support/test-config');
+const config=testConfig.loadTestConfig();
+require('./prepare-test-databases').verifyStack(config);
+testConfig.writeApplicationConfig(config);
 const {Pool}=require('../../orders-service/node_modules/pg');const amqp=require('../../orders-service/node_modules/amqplib');
 const run=`phase2_live_test_${Date.now()}`;const password=crypto.randomBytes(32).toString('hex');
 const broker=args=>execFileSync('docker',['exec','rabbitmq','rabbitmqctl',...args],{stdio:['pipe','pipe','pipe']});
@@ -8,16 +11,23 @@ const pools={};const workers=new Set();const signals=[];let connection,channel;
 const report=[];const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(check,label){for(let n=0;n<150;n++){if(await check())return;await sleep(100);}throw new Error(`Timeout: ${label}`);}
 function worker(service,hold=false){
- const child=fork(path.join(__dirname,'test-support/live-worker.js'),[],{env:{...process.env,NODE_ENV:'test',LIVE_SERVICE:service,LIVE_HOLD:String(hold),PAYMENT_OUTCOME:'succeeded',REFUND_OUTCOME:'refunded',DB_HOST:'localhost',DB_PORT:{orders:'5435',inventory:'5437',payments:'5436'}[service],DB_NAME:`${service}_db`,DB_NAME_TEST:`${service}_phase2_test`,DB_USER:service==='inventory'?'inventory_user':`${service}_app`,DB_PASSWORD:config[service==='inventory'?'INVENTORY_DB_PASSWORD':`${service.toUpperCase()}_APP_DB_PASSWORD`],RABBITMQ_URL:`amqp://${run}:${password}@localhost:5672/${run}`},stdio:['ignore','ignore','ignore','ipc']});
+ const env={...process.env,...testConfig.applicationEnvironment(service),TEST_SERVICE:service,LIVE_SERVICE:service,LIVE_HOLD:String(hold),PAYMENT_OUTCOME:'succeeded',REFUND_OUTCOME:'refunded',RABBITMQ_URL:`amqp://${run}:${password}@127.0.0.1:5672/${run}`};
+ for(const key of Object.keys(env))if(/(?:ADMIN|POSTGRES|_DB_PASSWORD|_APP_DB_PASSWORD|_RABBITMQ_URL|^PGPASSWORD$|^PGUSER$|^PGDATABASE$)/.test(key))delete env[key];
+ const child=fork(path.join(__dirname,'test-support/live-worker.js'),[],{env,stdio:['ignore','ignore','ignore','ipc']});
  workers.add(child);child.on('message',msg=>signals.push({...msg,service}));child.on('exit',()=>workers.delete(child));return child;
 }
 async function stop(child,signal='SIGTERM'){if(child.exitCode!==null||child.signalCode)return;const exit=new Promise(r=>child.once('exit',r));child.kill(signal);await Promise.race([exit,sleep(4000).then(()=>{if(child.exitCode===null)child.kill('SIGKILL');})]);await exit;}
 async function publish(type,payload){await require('../../payments-service/src/publishConfirmed').publishConfirmed(channel,type,payload);}
 async function rows(service,sql,args=[]){return (await pools[service].query(sql,args)).rows;}
 (async()=>{
+ Object.assign(process.env,testConfig.applicationEnvironment('orders'),{TEST_SERVICE:'orders'});
+ assert.ok(/^phase2_live_test_[0-9]+$/.test(run));
  for(const service of ['orders','inventory','payments']){
-  pools[service]=new Pool({host:'localhost',port:{orders:5435,inventory:5437,payments:5436}[service],database:`${service}_phase2_test`,user:service==='inventory'?'inventory_user':'postgres',password:config[`${service.toUpperCase()}_DB_PASSWORD`]});
-  assert.equal((await rows(service,'SELECT current_database() AS db'))[0].db,`${service}_phase2_test`);
+  const spec=config.services[service];
+  pools[service]=require('./test-support/admin-db')(service,{Pool});
+  const identity=(await rows(service,'SELECT current_database() AS db,current_user AS role'))[0];
+  assert.equal(identity.db,spec.database);assert.equal(identity.role,spec.admin.user);
+
  }
  // Fixtures affect only the three exact test databases.
  await pools.orders.query('TRUNCATE orders,order_sagas,inbox_events,outbox_events RESTART IDENTITY CASCADE');
@@ -63,5 +73,5 @@ async function rows(service,sql,args=[]){return (await pools[service].query(sql,
  }
  report.push('Payment and refund technical failures each make exactly three attempts then reach matching confirmed DLQ');
  for(const queue of ['inventory_reserve_requested','inventory_release_requested','payment_requested','refund_requested'])assert.equal((await channel.checkQueue(queue)).messageCount,0);
- console.log(JSON.stringify({passed:true,testVhost:run,testDatabases:Object.keys(pools).map(x=>`${x}_phase2_test`),results:report,orderId:order.id,payments:1,refunds:1,stock:10,saga:'CANCELLED',testDlqs:{payment_requested_dlq:1,refund_requested_dlq:1}}));
+ console.log(JSON.stringify({passed:true,testVhost:run,testDatabases:Object.keys(pools).map(x=>config.services[x].database),results:report,orderId:order.id,payments:1,refunds:1,stock:10,saga:'CANCELLED',testDlqs:{payment_requested_dlq:1,refund_requested_dlq:1}}));
 })().catch(error=>{console.error('Live test failed:',error.code||error.message);process.exitCode=1;}).finally(async()=>{await Promise.all([...workers].map(child=>stop(child)));if(connection)await connection.close().catch(()=>{});await Promise.all(Object.values(pools).map(pool=>pool.end()));console.log('Test vhost, queues and fixtures retained; no development resources accessed.');});

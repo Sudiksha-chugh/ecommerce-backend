@@ -1,3 +1,4 @@
+const fixtureDb=require('../../scripts/phase2/test-support/admin-db')('inventory',require('pg'));
 const request = require('supertest');
 const app = require('../src/app');
 const pool = require('../src/db');
@@ -16,11 +17,11 @@ async function seedStock(productId, quantity) {
 
 describe('inventory APIs', () => {
   afterEach(async () => {
-    await pool.query('DELETE FROM outbox_events');
-    await pool.query('DELETE FROM reservations');
-    await pool.query('DELETE FROM inventory');
-    await pool.query('DELETE FROM inbox_events');
-    await pool.query('DELETE FROM inventory_order_operations');
+    await fixtureDb.query('DELETE FROM outbox_events');
+    await fixtureDb.query('DELETE FROM reservations');
+    await fixtureDb.query('DELETE FROM inventory');
+    await fixtureDb.query('DELETE FROM inbox_events');
+    await fixtureDb.query('DELETE FROM inventory_order_operations');
   });
 
   describe('POST /inventory/stock', () => {
@@ -352,3 +353,5 @@ describe('inventory APIs', () => {
 });
 
 afterAll(() => pool.end());
+
+afterAll(()=>fixtureDb.end());

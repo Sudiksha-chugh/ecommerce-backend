@@ -676,6 +676,8 @@ The CI pipeline verifies the application using:
 * Service dependencies
 * Automated test suites
 
+The database CI job provisions Orders, Inventory, Payments and Catalog from canonical migrations in the dedicated test Compose stack. Application tests use restricted roles, with separate administrative fixture connections. Saga and restricted Payments integration coverage is required; migration/permission checks and isolated Catalog Elasticsearch run in the same job. Auth, Cart and Gateway keep their existing CI coverage. Live RabbitMQ fault injection remains optional. See [Phase 2.1 CI details](docs/phase2.md).
+
 This helps prevent regressions before changes are merged.
 
 ---

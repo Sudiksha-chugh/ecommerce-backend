@@ -1,3 +1,4 @@
+const fixtureDb=require('../../scripts/phase2/test-support/admin-db')('inventory',require('pg'));
 const pool = require('../src/db');
 const {
   releaseExpiredReservations,
@@ -15,9 +16,9 @@ describe('Inventory expiration worker', () => {
   });
 
   afterEach(async () => {
-    await pool.query('DELETE FROM outbox_events');
-    await pool.query('DELETE FROM reservations');
-    await pool.query('DELETE FROM inventory');
+    await fixtureDb.query('DELETE FROM outbox_events');
+    await fixtureDb.query('DELETE FROM reservations');
+    await fixtureDb.query('DELETE FROM inventory');
   });
 
   it('expires a pending reservation and restores stock', async () => {
@@ -175,3 +176,5 @@ describe('Inventory expiration worker', () => {
 });
 
 afterAll(() => pool.end());
+
+afterAll(()=>fixtureDb.end());

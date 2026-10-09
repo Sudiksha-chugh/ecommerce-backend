@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   auth-service:
     runs-on: ubuntu-latest
@@ -28,6 +31,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -80,183 +85,83 @@ jobs:
           AUTH0_AUDIENCE: https://test-api.example.com
         run: npm test
 
-  catalog-service:
+  database-integration:
+    name: Restricted-role database and Saga integration
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: catalog_user
-          POSTGRES_PASSWORD: catalog_pass
-          POSTGRES_DB: catalog_db_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-        env:
-          discovery.type: single-node
-          xpack.security.enabled: "false"
-          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-        ports:
-          - 9200:9200
-        options: >-
-          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
+    timeout-minutes: 25
+    env:
+      PHASE2_INTEGRATION: "true"
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: catalog-service/package-lock.json
+          cache: npm
+          cache-dependency-path: |
+            orders-service/package-lock.json
+            inventory-service/package-lock.json
+            payments-service/package-lock.json
+            catalog-service/package-lock.json
 
-      - name: Install dependencies
-        working-directory: catalog-service
-        run: npm ci
-
-      - name: Create test database schema
+      - name: Install database-service dependencies
         run: |
-          PGPASSWORD=catalog_pass psql -h localhost -U catalog_user -d catalog_db_test -c "
-            CREATE TABLE products (
-              id SERIAL PRIMARY KEY,
-              name VARCHAR(255) NOT NULL,
-              description TEXT,
-              price NUMERIC(10,2) NOT NULL,
-              stock INTEGER NOT NULL DEFAULT 0,
-              created_at TIMESTAMP DEFAULT NOW()
-            );
+          npm ci --prefix orders-service
+          npm ci --prefix inventory-service
+          npm ci --prefix payments-service
+          npm ci --prefix catalog-service
 
-            CREATE TABLE inventory_reservations (
-              id SERIAL PRIMARY KEY,
-              order_id INTEGER NOT NULL,
-              product_id INTEGER NOT NULL,
-              quantity INTEGER NOT NULL CHECK (quantity > 0),
-              status VARCHAR(20) NOT NULL DEFAULT 'reserved',
-              created_at TIMESTAMP DEFAULT NOW(),
-              expires_at TIMESTAMP,
-              CONSTRAINT unique_order_product UNIQUE (order_id, product_id)
-            );"
-      - name: Check internal service key
+      - name: Check dedicated Compose tooling
+        run: docker compose version
+
+      - name: Provision canonical isolated test databases and search
+        run: node scripts/phase2/prepare-test-databases.js --start
+
+      - name: Verify migration safety and restricted permissions on PostgreSQL
         env:
-         INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          PHASE21_POSTGRES: "true"
+        run: node --test scripts/phase2/tests/provisioning.test.js scripts/phase2/tests/run-tests.test.js
+
+      # Sequential execution: Orders' Saga suite shares all three service databases.
+      - name: Run Orders including cross-service Saga integration
+        run: node scripts/phase2/run-tests.js orders --ci --json --outputFile="$RUNNER_TEMP/orders-results.json"
+
+      - name: Run Payments including restricted-role integration
+        run: node scripts/phase2/run-tests.js payments --ci --json --outputFile="$RUNNER_TEMP/payments-results.json"
+
+      - name: Require Saga and restricted Payments tests to have executed
         run: |
-          if [ -z "$INTERNAL_SERVICE_KEY"  ]; then
-           echo "INTERNAL_SERVICE_KEY is NOT set"
-           exit 1
-          else
-           echo "INTERNAL_SERVICE_KEY is set"
-          fi
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const assert = require('assert/strict');
+          for (const [service, filename, minimum] of [
+            ['orders', 'phase2.integration.test.js', 10],
+            ['payments', 'restrictedRole.integration.test.js', 6],
+          ]) {
+            const report = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, `${service}-results.json`), 'utf8'));
+            assert.equal(report.success, true, `${service}: suite failed`);
+            assert.equal(report.numPendingTests, 0, `${service}: skipped tests`);
+            const suite = report.testResults.find(result => path.basename(result.name) === filename);
+            assert.ok(suite, `${filename}: missing report`);
+            assert.ok(suite.assertionResults.length >= minimum, `${filename}: integration scenarios missing`);
+            assert.ok(suite.assertionResults.every(result => result.status === 'passed'), `${filename}: unexecuted or failed scenarios`);
+            console.log(`${filename}: ${suite.assertionResults.length} integration scenarios passed`);
+          }
+          NODE
 
-      - name: Run tests
-        working-directory: catalog-service
-        env:
-          NODE_ENV: test
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: catalog_user
-          DB_PASSWORD: catalog_pass
-          DB_NAME_TEST: catalog_db_test
-          ES_NODE: http://localhost:9200
-          JWT_CURRENT_SECRET: test-current-secret-32-characters-long
-          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
-          AUTH0_DOMAIN: test-tenant.auth0.com
-          AUTH0_AUDIENCE: https://test-api.example.com
-        run: npm test
+      - name: Run Inventory with restricted application credentials
+        run: node scripts/phase2/run-tests.js inventory --ci
 
-  inventory-service:
-    runs-on: ubuntu-latest
+      - name: Run Catalog with isolated PostgreSQL and Elasticsearch
+        run: node scripts/phase2/run-tests.js catalog --ci
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: inventory_user
-          POSTGRES_PASSWORD: inventory_pass
-          POSTGRES_DB: inventory_db_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: inventory-service/package-lock.json
-
-      - name: Install dependencies
-        working-directory: inventory-service
-        run: npm ci
-
-      - name: Create test database schema
-        run: |
-          PGPASSWORD=inventory_pass psql -h localhost -U inventory_user -d inventory_db_test -c "
-            CREATE TABLE inventory (
-              product_id INTEGER PRIMARY KEY,
-              quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
-              updated_at TIMESTAMP DEFAULT NOW()
-            );
-
-            CREATE TABLE reservations (
-              id SERIAL PRIMARY KEY,
-              order_id INTEGER NOT NULL,
-              product_id INTEGER NOT NULL,
-              quantity INTEGER NOT NULL CHECK (quantity > 0),
-              status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-              created_at TIMESTAMP DEFAULT NOW(),
-              expires_at TIMESTAMP,
-              CONSTRAINT unique_order_product UNIQUE (order_id, product_id),
-              CONSTRAINT reservations_status_check
-                CHECK (status IN ('PENDING', 'CONFIRMED', 'RELEASED', 'EXPIRED'))
-            );
-
-            CREATE INDEX idx_reservations_expiration
-            ON reservations (expires_at)
-            WHERE status = 'PENDING';
-
-            CREATE TABLE outbox_events (
-              id SERIAL PRIMARY KEY,
-              event_type VARCHAR(50) NOT NULL,
-              payload JSONB NOT NULL,
-              published BOOLEAN NOT NULL DEFAULT FALSE,
-              created_at TIMESTAMP DEFAULT NOW(),
-              published_at TIMESTAMP
-            );"
-
-      - name: Apply Phase 2 test migration
-        run: PGPASSWORD=inventory_pass psql -v ON_ERROR_STOP=1 -h localhost -U inventory_user -d inventory_db_test -f inventory-service/migrations/001_command_dedup.sql
-
-      - name: Run tests
-        working-directory: inventory-service
-        env:
-          NODE_ENV: test
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: inventory_user
-          DB_PASSWORD: inventory_pass
-          DB_NAME_TEST: inventory_db_test
-          INTERNAL_SERVICE_KEY: test-internal-service-key
-        run: npm test
+      # No secret-file/container-inspect artifacts or automatic live RabbitMQ replay.
+      # Hosted-runner resources expire with the job; no volumes/databases are deleted here.
 
   cart-service:
     runs-on: ubuntu-latest
@@ -275,6 +180,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -296,214 +203,14 @@ jobs:
           JWT_CURRENT_SECRET: test-current-secret-32-characters-long
         run: npm test
 
-  orders-service:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: orders_db_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      rabbitmq:
-        image: rabbitmq:3-management
-        env:
-          RABBITMQ_DEFAULT_USER: guest
-          RABBITMQ_DEFAULT_PASS: guest
-        ports:
-          - 5672:5672
-        options: >-
-          --health-cmd "rabbitmq-diagnostics -q ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: orders-service/package-lock.json
-
-      - name: Install dependencies
-        working-directory: orders-service
-        run: npm ci
-
-      - name: Create test database schema
-        run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d orders_db_test -c "
-            CREATE TABLE orders (
-              id SERIAL PRIMARY KEY,
-              user_id INTEGER NOT NULL,
-              items JSONB NOT NULL,
-              total_amount NUMERIC(10,2) NOT NULL,
-              status VARCHAR(20) NOT NULL DEFAULT 'pending',
-              created_at TIMESTAMP DEFAULT NOW(),
-              idempotency_key VARCHAR(255)
-            );
-
-            CREATE UNIQUE INDEX orders_user_id_idempotency_key_idx
-            ON orders (user_id, idempotency_key)
-            WHERE idempotency_key IS NOT NULL;
-
-            CREATE TABLE outbox_events (
-              id SERIAL PRIMARY KEY,
-              event_type VARCHAR(50) NOT NULL,
-              payload JSONB NOT NULL,
-              published BOOLEAN NOT NULL DEFAULT FALSE,
-              created_at TIMESTAMP DEFAULT NOW(),
-              published_at TIMESTAMP
-            );
-
-            CREATE TABLE order_sagas (
-              order_id INTEGER PRIMARY KEY
-                REFERENCES orders(id) ON DELETE CASCADE,
-              state VARCHAR(40) NOT NULL DEFAULT 'PENDING',
-              version INTEGER NOT NULL DEFAULT 1,
-              last_error TEXT,
-              created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-              updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-            );
-
-            CREATE INDEX idx_order_sagas_state
-            ON order_sagas (state);
-
-            CREATE TABLE inbox_events (
-              event_id VARCHAR(255) PRIMARY KEY,
-              event_type VARCHAR(100) NOT NULL,
-              order_id INTEGER,
-              received_at TIMESTAMP NOT NULL DEFAULT NOW(),
-              processed_at TIMESTAMP
-            );
-
-            CREATE INDEX idx_inbox_events_order_id
-            ON inbox_events (order_id);
-          "
-      - name: Apply Phase 2 test migration
-        run: PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d orders_db_test -f orders-service/migrations/002_saga_compensation.sql
-
-      - name: Run tests
-        working-directory: orders-service
-        env:
-          NODE_ENV: test
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-          DB_NAME_TEST: orders_db_test
-          RABBITMQ_URL: amqp://guest:guest@localhost:5672
-          JWT_CURRENT_SECRET: test-current-secret-32-characters-long
-        run: npm test
-
-  payments-service:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: payments_db_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      rabbitmq:
-        image: rabbitmq:3-management
-        env:
-          RABBITMQ_DEFAULT_USER: guest
-          RABBITMQ_DEFAULT_PASS: guest
-        ports:
-          - 5672:5672
-        options: >-
-          --health-cmd "rabbitmq-diagnostics -q ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: payments-service/package-lock.json
-
-      - name: Install dependencies
-        working-directory: payments-service
-        run: npm ci
-
-      - name: Create test database schema
-        run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d payments_db_test -c "
-            CREATE TABLE payments (
-              id SERIAL PRIMARY KEY,
-              order_id INTEGER NOT NULL UNIQUE,
-              user_id INTEGER NOT NULL,
-              amount NUMERIC(10,2) NOT NULL,
-              status VARCHAR(50) NOT NULL,
-              transaction_id VARCHAR(255),
-              created_at TIMESTAMP DEFAULT NOW(),
-              updated_at TIMESTAMP DEFAULT NOW()
-            );
-            
-            CREATE TABLE refunds (
-              id SERIAL PRIMARY KEY,
-              order_id INTEGER NOT NULL UNIQUE,
-              user_id INTEGER NOT NULL,
-              amount NUMERIC(10,2) NOT NULL,
-              status VARCHAR(50) NOT NULL,
-              created_at TIMESTAMP DEFAULT NOW(),
-              updated_at TIMESTAMP DEFAULT NOW()
-            );
-            CREATE TABLE outbox_events (
-              id SERIAL PRIMARY KEY,
-              event_type VARCHAR(50) NOT NULL,
-              payload JSONB NOT NULL,
-              published BOOLEAN NOT NULL DEFAULT FALSE,
-              created_at TIMESTAMP DEFAULT NOW(),
-               published_at TIMESTAMP
-             );"
-      - name: Apply Phase 2 test migration
-        run: PGPASSWORD=postgres psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments_db_test -f payments-service/migrations/001_inbox.sql
-
-      - name: Run tests
-        working-directory: payments-service
-        env:
-          NODE_ENV: test
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-          DB_NAME_TEST: payments_db_test
-          RABBITMQ_URL: amqp://guest:guest@localhost:5672
-        run: npm test
-
   gateway:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

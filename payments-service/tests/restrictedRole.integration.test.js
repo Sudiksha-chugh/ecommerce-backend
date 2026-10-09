@@ -1,8 +1,12 @@
+const testConfig=require('../../scripts/phase2/test-support/test-config');
+Object.assign(process.env,testConfig.applicationEnvironment('payments'),{TEST_SERVICE:'payments'});
+jest.mock('dotenv',()=>({config:jest.fn(()=>({parsed:{}}))}));
+testConfig.guardApplicationPool('payments',jest.requireActual('../src/db'));
 if(process.env.PHASE2_INTEGRATION==='true'){
  const pool=require('../src/db');const fixture=require('../../scripts/phase2/test-support/admin-db')('payments',require('pg'));const {processRequest}=require('../src/paymentStore');
  const payment={eventId:'restricted-payment',operationId:'990001:payment_requested',orderId:990001,userId:22,amount:'20.00'};
  const refund={...payment,eventId:'restricted-refund',operationId:'990001:refund_requested'};
- beforeEach(async()=>{const identity=(await pool.query('SELECT current_user,current_database()')).rows[0];expect(identity.current_user).toBe('payments_app');expect(identity.current_database).toBe('payments_phase2_test');await fixture.query('TRUNCATE payments,refunds,inbox_events,outbox_events RESTART IDENTITY');delete process.env.REFUND_OUTCOME;delete process.env.PAYMENT_OUTCOME;});
+ beforeEach(async()=>{const identity=(await pool.query('SELECT current_user,current_database()')).rows[0];expect(identity.current_user).toBe('payments_app');expect(identity.current_database).toBe('payments_phase21_test');await fixture.query('TRUNCATE payments,refunds,inbox_events,outbox_events RESTART IDENTITY');delete process.env.REFUND_OUTCOME;delete process.env.PAYMENT_OUTCOME;});
  afterAll(()=>Promise.all([pool.end(),fixture.end()]));
  test('restricted payment insertion and duplicate different event identity stay unique',async()=>{await processRequest('payment_requested',payment);await processRequest('payment_requested',{...payment,eventId:'payment-redelivery'});expect((await pool.query('SELECT * FROM payments')).rows).toHaveLength(1);expect((await pool.query('SELECT payload FROM outbox_events LIMIT 1')).rows[0].payload.operationId).toBe(payment.operationId);});
  test('refund insertion, concurrent duplicates and new event IDs cannot duplicate success',async()=>{await processRequest('payment_requested',payment);await Promise.all([processRequest('refund_requested',refund),processRequest('refund_requested',refund)]);await processRequest('refund_requested',{...refund,eventId:'duplicate-refund'});const rows=(await pool.query('SELECT * FROM refunds')).rows;expect(rows).toHaveLength(1);expect(rows[0].status).toBe('refunded');});

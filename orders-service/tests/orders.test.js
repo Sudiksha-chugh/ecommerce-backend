@@ -40,7 +40,6 @@ jest.mock('../src/middleware/auth0User', () => {
 
 const app = require('../src/app');
 const pool = require('../src/db');
-require('dotenv').config();
 
 function makeToken(userId) {
   return jwt.sign(
